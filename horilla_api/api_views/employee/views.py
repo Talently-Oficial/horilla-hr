@@ -92,6 +92,42 @@ class EmployeeTypeAPIView(APIView):
         return Response(serializer.data, status=200)
 
 
+def employee_list_response(request):
+    user = request.user
+    search = request.query_params.get("search")
+
+    # Start with a base queryset with only required fields
+    employees_queryset = Employee.objects.only(
+        "id", "employee_first_name", "employee_last_name"
+    )
+
+    # Permission-based filtering
+    if user.has_perm("employee.view_employee"):
+        pass  # employees_queryset is already all employees
+    else:
+        subordinate_qs = user.employee_get.get_subordinate_employees()
+        if subordinate_qs.exists():
+            employees_queryset = subordinate_qs.only(
+                "id", "employee_first_name", "employee_last_name"
+            )
+        else:
+            employees_queryset = employees_queryset.filter(id=user.employee_get.id)
+
+    # Apply search filter if provided
+    if search:
+        employees_queryset = employees_queryset.filter(
+            Q(employee_first_name__icontains=search)
+            | Q(employee_last_name__icontains=search)
+        )
+
+    # Paginate
+    paginator = PageNumberPagination()
+    page = paginator.paginate_queryset(employees_queryset, request)
+
+    serializer = EmployeeListSerializer(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
+
 class EmployeeAPIView(APIView):
     """
     Handles CRUD operations for employees.
@@ -101,7 +137,10 @@ class EmployeeAPIView(APIView):
     filterset_class = EmployeeFilter
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, pk):
+    def get(self, request, pk=None):
+        if pk is None:
+            return employee_list_response(request)
+
         user = request.user
         try:
             employee = Employee.objects.only(
@@ -197,39 +236,7 @@ class EmployeeListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        search = request.query_params.get("search")
-
-        # Start with a base queryset with only required fields
-        employees_queryset = Employee.objects.only(
-            "id", "employee_first_name", "employee_last_name"
-        )
-
-        # Permission-based filtering
-        if user.has_perm("employee.view_employee"):
-            pass  # employees_queryset is already all employees
-        else:
-            subordinate_qs = user.employee_get.get_subordinate_employees()
-            if subordinate_qs.exists():
-                employees_queryset = subordinate_qs.only(
-                    "id", "employee_first_name", "employee_last_name"
-                )
-            else:
-                employees_queryset = employees_queryset.filter(id=user.employee_get.id)
-
-        # Apply search filter if provided
-        if search:
-            employees_queryset = employees_queryset.filter(
-                Q(employee_first_name__icontains=search)
-                | Q(employee_last_name__icontains=search)
-            )
-
-        # Paginate
-        paginator = PageNumberPagination()
-        page = paginator.paginate_queryset(employees_queryset, request)
-
-        serializer = EmployeeListSerializer(page, many=True)
-        return paginator.get_paginated_response(serializer.data)
+        return employee_list_response(request)
 
 
 class EmployeeBankDetailsAPIView(APIView):
