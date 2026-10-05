@@ -705,9 +705,10 @@ def employee_leave_balance(request):
     """
     Vacation balance of the logged-in employee as JSON.
 
-    Only accrual leave types (vacation): unlimited types are stored as a huge
-    balance and resetting ones (birthday) are not a balance worth charting.
-    Used matches the Used column of the balance card.
+    Only the accrual leave types (LEAVE_ACCRUAL_TYPES, i.e. vacation):
+    unlimited types are stored as a huge balance and the rest are not a balance
+    worth charting. Used matches the Used column of the balance card. The donut
+    charts the first row, so the order is fixed.
     """
     from leave.models import AvailableLeave
     from leave.services import accrual_periods, leave_card_kind, leave_card_title
@@ -718,13 +719,15 @@ def employee_leave_balance(request):
 
     balances = []
     try:
-        available_leaves = AvailableLeave.objects.filter(
-            employee_id=employee
-        ).select_related("leave_type_id")
+        available_leaves = (
+            AvailableLeave.objects.filter(employee_id=employee)
+            .select_related("leave_type_id", "employee_id__employee_work_info")
+            .order_by("leave_type_id__name", "pk")
+        )
 
         for al in available_leaves:
             lt = al.leave_type_id
-            if lt is None or leave_card_kind(lt) != "accrual":
+            if leave_card_kind(lt) != "accrual":
                 continue
             periods = accrual_periods(al)
             last_year = next(
