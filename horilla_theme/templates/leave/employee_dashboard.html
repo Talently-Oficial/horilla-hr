@@ -606,8 +606,8 @@
                     <div class="ed-chart-card">
                         <div class="ed-chart-card__header">
                             <div>
-                                <div class="ed-chart-card__title">{% trans "Leave Balance" %}</div>
-                                <div class="ed-chart-card__subtitle">{% trans "Available days by type" %}</div>
+                                <div class="ed-chart-card__title">{% trans "Vacation balance" %}</div>
+                                <div class="ed-chart-card__subtitle">{% trans "Available and used days" %}</div>
                             </div>
                         </div>
                         <div class="ed-chart-card__body">
@@ -845,50 +845,50 @@
                         el.innerHTML = emptyHtml('{% trans "No leave balance data" %}');
                         return;
                     }
-                    // Use total_days (available + carryforward) so the chart always shows
-                    // even when available_days alone is 0.
-                    var series = data.balances.map(function (b) {
-                        return parseFloat(b.total_days) || (parseFloat(b.available_days) + parseFloat(b.carryforward_days)) || 0;
-                    });
-                    var labels = data.balances.map(function (b) { return b.name; });
-
-                    var colors = data.balances.map(function (b, i) { return COLORS[i % COLORS.length]; });
-
-                    var total = series.reduce(function (a, b) { return a + b; }, 0);
-                    if (total === 0) {
+                    // Vacation only (see employee_leave_balance): available vs used days.
+                    var b = data.balances[0];
+                    var fmt = function (v) { return parseFloat((parseFloat(v) || 0).toFixed(2)) + 'd'; };
+                    var available = parseFloat(b.available_days) || 0;
+                    var used = parseFloat(b.used_days) || 0;
+                    var series = [Math.max(available, 0), Math.max(used, 0)];
+                    if (series[0] + series[1] === 0) {
                         el.innerHTML = emptyHtml('{% trans "No leave balance available" %}');
                         return;
                     }
+                    var centerLabel = available < 0
+                        ? '{% trans "available" %} · ' + fmt(-available) + ' {% trans "owed" %}'
+                        : '{% trans "available" %}';
 
                     el.innerHTML = '';
-                    new ApexCharts(el, {
+                    var chartEl = document.createElement('div');
+                    el.appendChild(chartEl);
+                    new ApexCharts(chartEl, {
                         series: series,
                         chart: {
                             type: 'donut', height: 300, background: 'transparent', fontFamily: 'inherit',
-                            events: { dataPointSelection: function (e, ctx, cfg) {
-                                var b = data.balances[cfg.dataPointIndex];
-                                if (b && b.type_id) {
-                                    window.location.href = URL_USER_REQUEST + '?leave_type_id=' + b.type_id + '&filter_applied=on';
-                                }
+                            events: { dataPointSelection: function () {
+                                window.location.href = URL_USER_REQUEST + '?leave_type_id=' + b.type_id + '&filter_applied=on';
                             }}
                         },
-                        labels: labels,
-                        colors: colors,
+                        labels: ['{% trans "Available" %}', '{% trans "Used" %}'],
+                        colors: ['#22c55e', '#cbd5e1'],
                         plotOptions: { pie: { donut: { size: '65%', labels: { show: true,
-                            total: { show: true, label: '{% trans "Total" %}', color: textColor, fontSize: '12px', fontWeight: 600,
-                                formatter: function () { return total.toFixed(1) + 'd'; }
+                            total: { show: true, showAlways: true, label: centerLabel, color: textColor, fontSize: '12px', fontWeight: 600,
+                                formatter: function () { return fmt(Math.max(available, 0)); }
                             }
                         }}}},
                         stroke: { width: 2, colors: [cardBg] },
                         dataLabels: { enabled: false },
-                        legend: { position: 'bottom', labels: { colors: textColor }, fontSize: '11px', markers: { width: 8, height: 8, radius: 2 } },
-                        tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: function (v, o) {
-                            var b = data.balances[o.seriesIndex];
-                            var tip = v + 'd';
-                            if (b && b.used_days !== undefined) tip += ' (used: ' + b.used_days + 'd)';
-                            return tip;
-                        }}},
+                        legend: { position: 'bottom', labels: { colors: textColor }, fontSize: '11px', markers: { width: 8, height: 8, radius: 2 },
+                            formatter: function (name, o) { return name + ': ' + fmt(o.seriesIndex === 0 ? available : used); } },
+                        tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: function (v) { return fmt(v); } } },
                     }).render();
+                    if (b.expiring_days > 0) {
+                        var note = document.createElement('div');
+                        note.style.cssText = 'text-align:center;font-size:12px;opacity:0.7;margin-top:4px;';
+                        note.textContent = fmt(b.expiring_days) + ' {% trans "expire" %} ' + b.expiring_on;
+                        el.appendChild(note);
+                    }
                 })
                 .catch(function () {
                     var el = document.getElementById('ed-chart-balance');

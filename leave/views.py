@@ -67,7 +67,7 @@ from leave.methods import (
 )
 from leave.models import *
 from leave.models import leave_requested_dates
-from leave.services import evaluate_leave_type_conditions
+from leave.services import deduct_leave_balance, evaluate_leave_type_conditions
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
 
@@ -465,23 +465,7 @@ def leave_request_creation(request, type_id=None, emp_id=None):
                 )
                 leave_request.created_by = request.user.employee_get
                 leave_request.save()
-                if leave_request.requested_days > available_leave.available_days:
-                    leave = (
-                        leave_request.requested_days - available_leave.available_days
-                    )
-                    leave_request.approved_available_days = (
-                        available_leave.available_days
-                    )
-                    available_leave.available_days = 0
-                    available_leave.carryforward_days = (
-                        available_leave.carryforward_days - leave
-                    )
-                    leave_request.approved_carryforward_days = leave
-                else:
-                    available_leave.available_days = (
-                        available_leave.available_days - leave_request.requested_days
-                    )
-                    leave_request.approved_available_days = leave_request.requested_days
+                deduct_leave_balance(leave_request, available_leave)
                 leave_request.status = "approved"
             if save:
                 leave_request.created_by = request.user.employee_get
@@ -1059,18 +1043,7 @@ def leave_request_approve(request, id, emp_id=None):
     error_message = ""
     if leave_request.status != "approved":
         if total_available_leave >= leave_request.requested_days:
-            if leave_request.requested_days > available_leave.carryforward_days:
-                leave = leave_request.requested_days - available_leave.carryforward_days
-                leave_request.approved_carryforward_days = (
-                    available_leave.carryforward_days
-                )
-                available_leave.carryforward_days = 0
-                available_leave.available_days = available_leave.available_days - leave
-                leave_request.approved_available_days = leave
-            else:
-                temp = available_leave.carryforward_days
-                available_leave.carryforward_days = temp - leave_request.requested_days
-                leave_request.approved_carryforward_days = leave_request.requested_days
+            deduct_leave_balance(leave_request, available_leave)
             leave_request.status = "approved"
             if not leave_request.multiple_approvals():
                 leave_request.save()
@@ -2396,23 +2369,7 @@ def user_leave_request(request, id):
                 available_leave = AvailableLeave.objects.get(
                     leave_type_id=leave_type_id, employee_id=employee_id
                 )
-                if leave_request.requested_days > available_leave.available_days:
-                    leave = (
-                        leave_request.requested_days - available_leave.available_days
-                    )
-                    leave_request.approved_available_days = (
-                        available_leave.available_days
-                    )
-                    available_leave.available_days = 0
-                    available_leave.carryforward_days = (
-                        available_leave.carryforward_days - leave
-                    )
-                    leave_request.approved_carryforward_days = leave
-                else:
-                    available_leave.available_days = (
-                        available_leave.available_days - leave_request.requested_days
-                    )
-                    leave_request.approved_available_days = leave_request.requested_days
+                deduct_leave_balance(leave_request, available_leave)
                 leave_request.status = "approved"
                 available_leave.save()
             if save:
@@ -3329,27 +3286,7 @@ def leave_request_create(request):
                     available_leave = AvailableLeave.objects.get(
                         leave_type_id=leave_type_id, employee_id=employee_id
                     )
-                    if leave_request.requested_days > available_leave.available_days:
-                        leave = (
-                            leave_request.requested_days
-                            - available_leave.available_days
-                        )
-                        leave_request.approved_available_days = (
-                            available_leave.available_days
-                        )
-                        available_leave.available_days = 0
-                        available_leave.carryforward_days = (
-                            available_leave.carryforward_days - leave
-                        )
-                        leave_request.approved_carryforward_days = leave
-                    else:
-                        available_leave.available_days = (
-                            available_leave.available_days
-                            - leave_request.requested_days
-                        )
-                        leave_request.approved_available_days = (
-                            leave_request.requested_days
-                        )
+                    deduct_leave_balance(leave_request, available_leave)
                     leave_request.status = "approved"
                     available_leave.save()
                 if save:

@@ -190,6 +190,7 @@ def ess_kpi_data(request):
 def ess_leave_balance(request):
     """GET /ess/api/leave-balance/?year=&month= — leave balance with days taken in the selected month."""
     from leave.models import AvailableLeave, LeaveRequest
+    from leave.services import leave_card_kind, leave_card_title
 
     employee = _get_employee(request)
     if not employee:
@@ -204,6 +205,10 @@ def ess_leave_balance(request):
             .order_by("leave_type_id__name")
         )
         for al in qs:
+            # Vacation only: unlimited types are stored as a huge balance and
+            # would flatten the chart (same rule as the leave dashboard donut).
+            if leave_card_kind(al.leave_type_id) != "accrual":
+                continue
             taken = 0.0
             try:
                 approved = LeaveRequest.objects.filter(
@@ -218,11 +223,11 @@ def ess_leave_balance(request):
                 pass
             balances.append(
                 {
-                    "type": al.leave_type_id.name,
-                    "available": round(float(al.available_days), 1),
-                    "carryforward": round(float(al.carryforward_days), 1),
-                    "total": round(float(al.total_leave_days), 1),
-                    "taken_in_month": round(taken, 1),
+                    "type": leave_card_title(al.leave_type_id),
+                    "available": round(float(al.available_days), 2),
+                    "carryforward": round(float(al.carryforward_days), 2),
+                    "total": round(float(al.total_leave_days), 2),
+                    "taken_in_month": round(taken, 2),
                 }
             )
     except Exception:

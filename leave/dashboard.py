@@ -702,8 +702,15 @@ def employee_kpi_data(request):
 
 @login_required
 def employee_leave_balance(request):
-    """Return leave balance details for the logged-in employee as JSON."""
-    from leave.models import AvailableLeave, LeaveRequest
+    """
+    Vacation balance of the logged-in employee as JSON.
+
+    Only accrual leave types (vacation): unlimited types are stored as a huge
+    balance and resetting ones (birthday) are not a balance worth charting.
+    Used matches the Used column of the balance card.
+    """
+    from leave.models import AvailableLeave
+    from leave.services import accrual_periods, leave_card_kind, leave_card_title
 
     employee = _get_employee_for_user(request)
     if employee is None:
@@ -715,30 +722,23 @@ def employee_leave_balance(request):
             employee_id=employee
         ).select_related("leave_type_id")
 
-        # Pre-fetch used days per leave type for this employee
-        used_by_type = {
-            row["leave_type_id"]: float(row["used"] or 0)
-            for row in LeaveRequest.objects.filter(
-                employee_id=employee,
-                status="approved",
-            )
-            .values("leave_type_id")
-            .annotate(used=Sum("requested_days"))
-        }
-
         for al in available_leaves:
             lt = al.leave_type_id
-            if lt is None:
+            if lt is None or leave_card_kind(lt) != "accrual":
                 continue
-            used_days = used_by_type.get(lt.id, 0.0)
+            periods = accrual_periods(al)
+            last_year = next(
+                (row for row in periods["rows"] if row["label"] == "last year"), None
+            )
+            expiring = last_year if last_year and last_year["available"] > 0 else None
             balances.append(
                 {
                     "type_id": lt.id,
-                    "name": lt.name,
-                    "available_days": round(float(al.available_days or 0), 1),
-                    "carryforward_days": round(float(al.carryforward_days or 0), 1),
-                    "total_days": round(float(al.total_leave_days or 0), 1),
-                    "used_days": round(used_days, 1),
+                    "name": leave_card_title(lt),
+                    "available_days": periods["total"]["available"],
+                    "used_days": periods["total"]["used"],
+                    "expiring_days": expiring["available"] if expiring else 0,
+                    "expiring_on": expiring["expires"] if expiring else "",
                 }
             )
     except Exception:
