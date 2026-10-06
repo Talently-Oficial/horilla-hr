@@ -158,15 +158,45 @@ class BalanceCardRenderTests(TestCase):
     def test_cards_render_table_for_vacation_and_no_limit_for_unlimited(self):
         html = render_to_string(
             "leave/user_leave/user_leave.html",
-            {"user_leaves": [self.vacation_balance, self.medical_balance, self.compensatory_balance]},
+            {"user_leaves": [self.medical_balance, self.vacation_balance, self.compensatory_balance]},
         )
         self.assertIn("Vacation", html)
         self.assertEqual(html.count("Expires"), 1)  # only vacation gets the table
         self.assertIn(f"Jan 1, {date.today().year + 1}", html)
+        self.assertIn("days available", html)
         self.assertIn("Medical leave", html)
         self.assertIn("No limit", html)
         self.assertIn("Total days taken", html)
         self.assertNotIn("100000", html)
+
+    def test_vacation_goes_first_with_the_rest_stacked_beside_it(self):
+        html = render_to_string(
+            "leave/user_leave/user_leave.html",
+            {"user_leaves": [self.medical_balance, self.compensatory_balance, self.vacation_balance]},
+        )
+        self.assertLess(html.index("Vacation"), html.index("Compensatory Leave Type"))
+        # Limited types (compensatory, birthday) before unlimited ones.
+        self.assertLess(html.index("Compensatory Leave Type"), html.index("Medical leave"))
+        self.assertIn("lg:col-span-8 xl:col-span-7", html)
+        self.assertIn("lg:col-span-4 xl:col-span-5", html)
+
+    def test_without_vacation_the_other_cards_fill_the_row(self):
+        html = render_to_string(
+            "leave/user_leave/user_leave.html",
+            {"user_leaves": [self.medical_balance, self.compensatory_balance]},
+        )
+        self.assertNotIn("lg:col-span-8", html)
+        self.assertEqual(html.count("md:col-span-6 lg:col-span-4"), 2)
+
+    def test_negative_vacation_balance_shows_zero_and_owed(self):
+        from leave.models import AvailableLeave
+
+        AvailableLeave.objects.filter(pk=self.vacation_balance.pk).update(
+            available_days=-2.25, carryforward_days=0
+        )
+        balance = AvailableLeave.objects.get(pk=self.vacation_balance.pk)
+        html = render_to_string("leave/user_leave/user_leave.html", {"user_leaves": [balance]})
+        self.assertIn("2.25 owed", html)
 
     def test_balance_without_leave_type_does_not_break_the_list(self):
         from leave.models import AvailableLeave

@@ -46,9 +46,33 @@ def leave_card(context, available_leave):
         card["periods"] = accrual_periods(
             available_leave, date_joining=date_joining, approved=approved
         )
+        available = card["periods"]["total"]["available"]
+        card["available"] = max(available, 0)
+        card["owed"] = max(-available, 0)
     else:
         card["total_taken"] = total_days_taken(available_leave, approved=approved)
     return card
+
+
+_CARD_ORDER = {"accrual": 0, "limited": 1, "unlimited": 2}
+
+
+@register.simple_tag(takes_context=True)
+def leave_cards(context, user_leaves):
+    """
+    Cards for a list of balances, split for the layout: the accrual (vacation)
+    cards, which get the wide column, and the rest, ordered limited first
+    (e.g. birthday) and unlimited last.
+    """
+    items = [
+        {"leave": available_leave, "card": leave_card(context, available_leave)}
+        for available_leave in user_leaves
+    ]
+    items.sort(key=lambda item: _CARD_ORDER[item["card"]["kind"]])
+    return {
+        "accrual": [item for item in items if item["card"]["kind"] == "accrual"],
+        "others": [item for item in items if item["card"]["kind"] != "accrual"],
+    }
 
 
 @register.filter
