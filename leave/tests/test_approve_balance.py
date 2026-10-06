@@ -61,7 +61,8 @@ class LeaveRequestApproveBalanceTests(TestCase):
         self.assertEqual(req.approved_available_days, 3)
         self.assertEqual(req.status, "approved")
 
-    def test_approve_dips_into_carryforward(self):
+    def test_approve_uses_carryforward_first(self):
+        # Carryforward (last year's days) expires first, so it goes first.
         avail = self.AvailableLeave.objects.create(
             employee_id=self.employee,
             leave_type_id=self.leave_type,
@@ -72,11 +73,46 @@ class LeaveRequestApproveBalanceTests(TestCase):
         req = self._request(3)
         req.no_approval()
         avail.refresh_from_db()
-        self.assertEqual(avail.available_days, 0)
-        self.assertEqual(avail.carryforward_days, 2)
-        self.assertEqual(req.approved_available_days, 1)
-        self.assertEqual(req.approved_carryforward_days, 2)
+        self.assertEqual(avail.available_days, 1)
+        self.assertEqual(avail.carryforward_days, 1)
+        self.assertEqual(req.approved_available_days, 0)
+        self.assertEqual(req.approved_carryforward_days, 3)
         self.assertEqual(req.status, "approved")
+
+    def test_approve_spills_from_carryforward_into_available(self):
+        avail = self.AvailableLeave.objects.create(
+            employee_id=self.employee,
+            leave_type_id=self.leave_type,
+            available_days=5,
+            carryforward_days=2,
+            total_leave_days=7,
+        )
+        req = self._request(3)
+        req.no_approval()
+        avail.refresh_from_db()
+        self.assertEqual(avail.carryforward_days, 0)
+        self.assertEqual(avail.available_days, 4)
+        self.assertEqual(req.approved_carryforward_days, 2)
+        self.assertEqual(req.approved_available_days, 1)
+
+    def test_api_approve_uses_carryforward_first(self):
+        # Same rule on the API path the Slack bot uses.
+        from horilla_api.api_views.leave.views import LeaveRequestApproveAPIView
+
+        avail = self.AvailableLeave.objects.create(
+            employee_id=self.employee,
+            leave_type_id=self.leave_type,
+            available_days=5,
+            carryforward_days=2,
+            total_leave_days=7,
+        )
+        req = self._request(3)
+        LeaveRequestApproveAPIView().leave_approve_calculation(req, avail)
+        avail.refresh_from_db()
+        self.assertEqual(avail.carryforward_days, 0)
+        self.assertEqual(avail.available_days, 4)
+        self.assertEqual(req.approved_carryforward_days, 2)
+        self.assertEqual(req.approved_available_days, 1)
 
     def test_insufficient_balance_gate_blocks(self):
         from leave.services import has_sufficient_leave_balance

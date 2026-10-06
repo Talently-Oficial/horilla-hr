@@ -32,6 +32,7 @@ from leave.methods import (
     holiday_dates_list,
 )
 from leave.models import AvailableLeave, LeaveRequest, LeaveType, leave_requested_dates
+from leave.services import deduct_leave_balance
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
 
@@ -398,30 +399,7 @@ class MyLeaveRequestForm(HorillaFormView):
                             available_leave = AvailableLeave.objects.get(
                                 leave_type_id=leave_type_id, employee_id=employee_id
                             )
-                            if (
-                                leave_request.requested_days
-                                > available_leave.available_days
-                            ):
-                                leave = (
-                                    leave_request.requested_days
-                                    - available_leave.available_days
-                                )
-                                leave_request.approved_available_days = (
-                                    available_leave.available_days
-                                )
-                                available_leave.available_days = 0
-                                available_leave.carryforward_days = (
-                                    available_leave.carryforward_days - leave
-                                )
-                                leave_request.approved_carryforward_days = leave
-                            else:
-                                available_leave.available_days = (
-                                    available_leave.available_days
-                                    - leave_request.requested_days
-                                )
-                                leave_request.approved_available_days = (
-                                    leave_request.requested_days
-                                )
+                            deduct_leave_balance(leave_request, available_leave)
                             leave_request.status = "approved"
                             available_leave.save()
                         if save:
@@ -570,27 +548,7 @@ class MyLeaveRequestSingleForm(HorillaFormView):
                     available_leave = AvailableLeave.objects.get(
                         leave_type_id=leave_type_id, employee_id=employee_id
                     )
-                    if leave_request.requested_days > available_leave.available_days:
-                        leave = (
-                            leave_request.requested_days
-                            - available_leave.available_days
-                        )
-                        leave_request.approved_available_days = (
-                            available_leave.available_days
-                        )
-                        available_leave.available_days = 0
-                        available_leave.carryforward_days = (
-                            available_leave.carryforward_days - leave
-                        )
-                        leave_request.approved_carryforward_days = leave
-                    else:
-                        available_leave.available_days = (
-                            available_leave.available_days
-                            - leave_request.requested_days
-                        )
-                        leave_request.approved_available_days = (
-                            leave_request.requested_days
-                        )
+                    deduct_leave_balance(leave_request, available_leave)
                     leave_request.status = "approved"
                     available_leave.save()
                 if save:

@@ -17,6 +17,7 @@ from horilla_api.api_serializers.leave.serializers import *
 from leave.filters import *
 from leave.methods import filter_conditional_leave_request
 from leave.models import AvailableLeave, LeaveAllocationRequest, LeaveRequest, LeaveType
+from leave.services import deduct_leave_balance
 from notifications.signals import notify
 
 from ...api_decorators.base.decorators import manager_permission_required
@@ -715,19 +716,7 @@ class LeaveRequestApproveAPIView(APIView):
             raise serializers.ValidationError(e)
 
     def leave_approve_calculation(self, leave_request, available_leave):
-        if leave_request.requested_days > available_leave.available_days:
-            leave = leave_request.requested_days - available_leave.available_days
-            leave_request.approved_available_days = available_leave.available_days
-            available_leave.available_days = 0
-            available_leave.carryforward_days = (
-                available_leave.carryforward_days - leave
-            )
-
-            leave_request.approved_carryforward_days = leave
-        else:
-            temp = available_leave.available_days
-            available_leave.available_days = temp - leave_request.requested_days
-            leave_request.approved_available_days = leave_request.requested_days
+        deduct_leave_balance(leave_request, available_leave)
         available_leave.save()
 
     def leave_multiple_approve(self, request, leave_request, available_leave):
@@ -934,18 +923,7 @@ class LeaveRequestBulkApproveDeleteAPIview(APIView):
         raise serializers.ValidationError(_("Nothing to approve"))
 
     def leave_approve_calculation(self, leave_request, available_leave):
-        if leave_request.requested_days > available_leave.available_days:
-            leave = leave_request.requested_days - available_leave.available_days
-            leave_request.approved_available_days = available_leave.available_days
-            available_leave.available_days = 0
-            available_leave.carryforward_days = (
-                available_leave.carryforward_days - leave
-            )
-            leave_request.approved_carryforward_days = leave
-        else:
-            temp = available_leave.available_days
-            available_leave.available_days = temp - leave_request.requested_days
-            leave_request.approved_available_days = leave_request.requested_days
+        deduct_leave_balance(leave_request, available_leave)
         available_leave.save()
 
     @manager_permission_required("leave.change_leaverequest")
