@@ -1,13 +1,12 @@
 {% load i18n leave_balance %}
 {% comment %}
-    One balance card. Context: user_leave (AvailableLeave), card (from leave_card),
-    stacked (True inside the stacked column: cards share its height instead of
+    One balance card. Context: user_leave (AvailableLeave), card (from leave_cards),
+    stacked (True inside a stacked column: cards share its height instead of
     each taking 100% of it).
 {% endcomment %}
 <div
-    {% if stacked %}style="flex: 1; display: flex; flex-direction: column;"{% else %}class="h-full"{% endif %}
+    class="{% if stacked %}flex flex-col flex-1{% else %}h-full{% endif %}{% if user_leave.leave_type_id %} js-request-create-card{% endif %}"
     {% if user_leave.leave_type_id %}
-    id="requestCreateCard"
     data-toggle="oh-modal-toggle"
     data-target="#objectCreateModal"
     hx-get="{% url 'user-request' user_leave.leave_type_id.id %}"
@@ -15,55 +14,57 @@
     role="button"
     {% endif %}
 >
-    <div class="p-5 bg-white rounded-md shadow-card{% if not stacked %} h-full{% endif %}"{% if stacked %} style="flex: 1;"{% endif %}>
-        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+    <div class="p-5 bg-white rounded-md shadow-card {% if stacked %}flex-1{% else %}h-full{% endif %}">
+        <div class="flex items-center gap-3 mb-2">
             <img
                 src="{{ user_leave.leave_type_id.get_avatar }}"
                 width="40"
                 height="40"
-                class="oh-profile__image"
-                style="width: 40px; height: 40px; border-radius: 50%;"
+                class="oh-profile__image w-10 h-10"
                 alt="{% trans 'Leave Type Icon' %}"
             >
-            <h5 class="font-semibold text-sm" style="margin: 0;">{{ card.title }}</h5>
+            <h5 class="font-semibold text-sm m-0">{{ card.title }}</h5>
         </div>
         {% if card.kind == "accrual" %}
-            <p class="font-bold" style="font-size: 1.5rem; margin: 0 0 0.75rem;">
-                {{ card.available|leave_days }}
-                <span class="text-sm text-dark-200" style="font-weight: 400;">
-                    {% trans "days available" %}{% if card.owed %} · {{ card.owed|leave_days }} {% trans "owed" %}{% endif %}
-                </span>
+            <p class="text-2xl font-bold mb-3">
+                {% if card.owed %}
+                    {{ card.owed|leave_days }}
+                    <span class="text-sm font-normal text-dark-200">{% trans "days owed" %}</span>
+                {% else %}
+                    {{ card.periods.total.available|leave_days }}
+                    <span class="text-sm font-normal text-dark-200">{% trans "days available" %}</span>
+                {% endif %}
             </p>
-            <div style="overflow-x: auto;">
-                <table class="text-xs" style="width: 100%; border-collapse: collapse;">
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse text-xs">
                     <thead>
-                        <tr class="text-dark-200" style="text-align: right; border-bottom: 1px solid rgba(0, 0, 0, 0.08);">
-                            <th style="text-align: left; font-weight: 400; padding: 6px;">{% trans "Period" %}</th>
-                            <th style="font-weight: 400; padding: 6px;">{% trans "Earned" %}</th>
-                            <th style="font-weight: 400; padding: 6px;">{% trans "Used" %}</th>
-                            <th style="font-weight: 400; padding: 6px;">{% trans "Available" %}</th>
-                            <th style="font-weight: 400; padding: 6px;">{% trans "Expires" %}</th>
+                        <tr class="text-dark-200 text-right border-b">
+                            <th class="text-left font-normal px-2 py-1">{% trans "Period" %}</th>
+                            <th class="font-normal px-2 py-1">{% trans "Earned" %}</th>
+                            <th class="font-normal px-2 py-1">{% trans "Used" %}</th>
+                            <th class="font-normal px-2 py-1">{% trans "Available" %}</th>
+                            <th class="font-normal px-2 py-1">{% trans "Expires" %}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in card.periods.rows %}
-                            <tr style="text-align: right; border-bottom: 1px solid rgba(0, 0, 0, 0.08); vertical-align: top;">
-                                <td style="text-align: left; padding: 6px;">
+                            <tr class="text-right border-b align-top">
+                                <td class="text-left px-2 py-2">
                                     {{ row.year }}
-                                    <span class="text-dark-200" style="white-space: nowrap;">({% if row.label == "last year" %}{% trans "last year" %}{% else %}{% trans "this year" %}{% endif %})</span>
+                                    <span class="text-dark-200 whitespace-nowrap">({% if row.label == "last year" %}{% trans "last year" %}{% else %}{% trans "this year" %}{% endif %})</span>
                                 </td>
-                                <td style="padding: 6px;">{{ row.earned|leave_days }}</td>
-                                <td style="padding: 6px;">{{ row.used|leave_days }}</td>
-                                <td style="padding: 6px;">{{ row.available|leave_days }}</td>
-                                <td class="text-dark-200" style="padding: 6px;">{{ row.expires }}</td>
+                                <td class="px-2 py-2">{{ row.earned|leave_days }}</td>
+                                <td class="px-2 py-2">{{ row.used|leave_days }}</td>
+                                <td class="px-2 py-2">{{ row.available|leave_days }}</td>
+                                <td class="text-dark-200 whitespace-nowrap px-2 py-2">{{ row.expires }}</td>
                             </tr>
                         {% endfor %}
-                        <tr class="font-bold" style="text-align: right;">
-                            <td style="text-align: left; padding: 6px;">{% trans "Total" %}</td>
-                            <td style="padding: 6px;">{{ card.periods.total.earned|leave_days }}</td>
-                            <td style="padding: 6px;">{{ card.periods.total.used|leave_days }}</td>
-                            <td style="padding: 6px;">{{ card.periods.total.available|leave_days }}</td>
-                            <td style="padding: 6px;"></td>
+                        <tr class="font-bold text-right">
+                            <td class="text-left px-2 py-2">{% trans "Total" %}</td>
+                            <td class="px-2 py-2">{{ card.periods.total.earned|leave_days }}</td>
+                            <td class="px-2 py-2">{{ card.periods.total.used|leave_days }}</td>
+                            <td class="px-2 py-2">{{ card.periods.total.available|leave_days }}</td>
+                            <td class="px-2 py-2"></td>
                         </tr>
                     </tbody>
                 </table>

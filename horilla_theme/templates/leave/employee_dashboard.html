@@ -855,9 +855,8 @@
                         el.innerHTML = emptyHtml('{% trans "No leave balance available" %}');
                         return;
                     }
-                    var centerLabel = available < 0
-                        ? '{% trans "available" %} · ' + fmt(-available) + ' {% trans "owed" %}'
-                        : '{% trans "available" %}';
+                    // Same wording as the balance card: a negative balance is days owed.
+                    var centerLabel = available < 0 ? '{% trans "owed" %}' : '{% trans "available" %}';
 
                     el.innerHTML = '';
                     var chartEl = document.createElement('div');
@@ -874,7 +873,7 @@
                         colors: ['#22c55e', '#cbd5e1'],
                         plotOptions: { pie: { donut: { size: '65%', labels: { show: true,
                             total: { show: true, showAlways: true, label: centerLabel, color: textColor, fontSize: '12px', fontWeight: 600,
-                                formatter: function () { return fmt(Math.max(available, 0)); }
+                                formatter: function () { return fmt(Math.abs(available)); }
                             }
                         }}}},
                         stroke: { width: 2, colors: [cardBg] },
