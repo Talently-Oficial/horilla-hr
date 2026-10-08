@@ -30,8 +30,7 @@ def _employee_data(context, employee_id):
     return cache[employee_id]
 
 
-@register.simple_tag(takes_context=True)
-def leave_card(context, available_leave):
+def _leave_card(context, available_leave):
     """
     Everything a balance card needs: its kind ('accrual', 'unlimited' or
     'limited'), an English title, and the yearly periods (accrual) or the
@@ -46,9 +45,33 @@ def leave_card(context, available_leave):
         card["periods"] = accrual_periods(
             available_leave, date_joining=date_joining, approved=approved
         )
+        # A negative balance is shown as days owed, same number as the Total row.
+        card["owed"] = max(-card["periods"]["total"]["available"], 0)
     else:
         card["total_taken"] = total_days_taken(available_leave, approved=approved)
     return card
+
+
+# Unknown kinds sort last instead of breaking the page.
+_CARD_ORDER = {"accrual": 0, "limited": 1, "unlimited": 2}
+
+
+@register.simple_tag(takes_context=True)
+def leave_cards(context, user_leaves):
+    """
+    Cards for a list of balances, split for the layout: the accrual (vacation)
+    cards, which get the wide column, and the rest, ordered limited first
+    (e.g. birthday) and unlimited last.
+    """
+    items = [
+        {"leave": available_leave, "card": _leave_card(context, available_leave)}
+        for available_leave in user_leaves
+    ]
+    items.sort(key=lambda item: _CARD_ORDER.get(item["card"]["kind"], len(_CARD_ORDER)))
+    return {
+        "accrual": [item for item in items if item["card"]["kind"] == "accrual"],
+        "others": [item for item in items if item["card"]["kind"] != "accrual"],
+    }
 
 
 @register.filter

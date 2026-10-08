@@ -158,15 +158,96 @@ class BalanceCardRenderTests(TestCase):
     def test_cards_render_table_for_vacation_and_no_limit_for_unlimited(self):
         html = render_to_string(
             "leave/user_leave/user_leave.html",
-            {"user_leaves": [self.vacation_balance, self.medical_balance, self.compensatory_balance]},
+            {"user_leaves": [self.medical_balance, self.vacation_balance, self.compensatory_balance]},
         )
         self.assertIn("Vacation", html)
         self.assertEqual(html.count("Expires"), 1)  # only vacation gets the table
         self.assertIn(f"Jan 1, {date.today().year + 1}", html)
+        self.assertIn("days available", html)
         self.assertIn("Medical leave", html)
         self.assertIn("No limit", html)
         self.assertIn("Total days taken", html)
         self.assertNotIn("100000", html)
+
+    def test_vacation_goes_first_with_the_rest_stacked_beside_it(self):
+        html = render_to_string(
+            "leave/user_leave/user_leave.html",
+            {"user_leaves": [self.medical_balance, self.compensatory_balance, self.vacation_balance]},
+        )
+        self.assertLess(html.index("Vacation"), html.index("Compensatory Leave Type"))
+        # Limited types (compensatory, birthday) before unlimited ones.
+        self.assertLess(html.index("Compensatory Leave Type"), html.index("Medical leave"))
+        self.assertIn("lg:col-span-8 xl:col-span-7", html)
+        self.assertIn("lg:col-span-4 xl:col-span-5", html)
+
+    def test_without_vacation_the_other_cards_fill_the_row(self):
+        html = render_to_string(
+            "leave/user_leave/user_leave.html",
+            {"user_leaves": [self.medical_balance, self.compensatory_balance]},
+        )
+        self.assertNotIn("lg:col-span-8", html)
+        self.assertEqual(html.count("md:col-span-6 lg:col-span-4"), 2)
+
+    def test_negative_vacation_balance_shows_days_owed_matching_the_total(self):
+        import re
+
+        from leave.models import AvailableLeave
+
+        AvailableLeave.objects.filter(pk=self.vacation_balance.pk).update(
+            available_days=-2.25, carryforward_days=0
+        )
+        balance = AvailableLeave.objects.get(pk=self.vacation_balance.pk)
+        html = render_to_string("leave/user_leave/user_leave.html", {"user_leaves": [balance]})
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+        self.assertIn("2.25 days owed", text)
+        self.assertNotIn("days available", text)
+        # The bold Total row shows the same balance, as a negative available.
+        self.assertRegex(text, r"Total [\d.]+ [\d.]+ -2\.25")
+
+    def test_every_card_gets_the_request_class_and_no_duplicate_ids(self):
+        html = render_to_string(
+            "leave/user_leave/user_leave.html",
+            {"user_leaves": [self.vacation_balance, self.medical_balance, self.compensatory_balance]},
+        )
+        self.assertEqual(html.count("js-request-create-card"), 3)
+        self.assertNotIn('id="requestCreateCard"', html)
+
+    def test_several_accrual_types_share_one_wide_column(self):
+        from unittest import mock
+
+        from leave.models import AvailableLeave
+
+        # A second accrual type (settings-configurable): reuse the compensatory
+        # balance, unflagged in memory only.
+        second = AvailableLeave.objects.select_related("leave_type_id").get(
+            pk=self.compensatory_balance.pk
+        )
+        second.leave_type_id.is_compensatory_leave = False
+        with mock.patch(
+            "leave.services.LEAVE_ACCRUAL_TYPES", ("vacaciones", "compensatory leave type")
+        ):
+            html = render_to_string(
+                "leave/user_leave/user_leave.html",
+                {"user_leaves": [self.vacation_balance, second, self.medical_balance]},
+            )
+        self.assertEqual(html.count("Expires"), 2)
+        self.assertEqual(html.count("lg:col-span-8"), 1)
+        self.assertEqual(html.count("lg:col-span-4 xl:col-span-5"), 1)
+
+    def test_unknown_card_kind_sorts_last_instead_of_breaking(self):
+        from unittest import mock
+
+        with mock.patch(
+            "leave.templatetags.leave_balance.leave_card_kind",
+            side_effect=lambda leave_type: "accrual"
+            if leave_type and leave_type.name == "Vacaciones"
+            else "something-new",
+        ):
+            html = render_to_string(
+                "leave/user_leave/user_leave.html",
+                {"user_leaves": [self.medical_balance, self.vacation_balance]},
+            )
+        self.assertLess(html.index("Vacation"), html.index("Medical leave"))
 
     def test_balance_without_leave_type_does_not_break_the_list(self):
         from leave.models import AvailableLeave

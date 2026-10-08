@@ -1,77 +1,29 @@
-{% load static i18n leave_balance %}
+{% load leave_balance %}
+{% leave_cards user_leaves as cards %}
 <div class="grid grid-cols-12 gap-3 mb-2">
-    {% for user_leave in user_leaves %}
-        {% leave_card user_leave as card %}
-        <div
-            class="{% if card.kind == 'accrual' %}col-span-12{% else %}col-span-12 md:col-span-6 lg:col-span-4{% endif %}"
-            {% if user_leave.leave_type_id %}
-            id="requestCreateCard"
-            data-toggle="oh-modal-toggle"
-            data-target="#objectCreateModal"
-            hx-get="{% url 'user-request' user_leave.leave_type_id.id %}"
-            hx-target="#objectCreateModalTarget"
-            role="button"
-            {% endif %}
-        >
-            <div class="p-5 bg-white rounded-md shadow-card h-full">
-                <div class="oh-profile oh-profile--md">
-                    <div class="mr-1">
-                        <img
-                            src="{{user_leave.leave_type_id.get_avatar }}"
-                            width="60"
-                            class="oh-profile__image"
-                            alt="{% trans 'Leave Type Icon' %}"
-                        >
-                    </div>
-                </div>
-                <div class="ps-1">
-                    <h5 class="font-semibold mb-2 text-sm">{{ card.title }}</h5>
-                    {% if card.kind == "accrual" %}
-                        <div style="overflow-x: auto;">
-                            <table class="text-xs" style="width: 100%; border-collapse: collapse;">
-                                <thead>
-                                    <tr class="text-dark-200" style="text-align: right; border-bottom: 1px solid rgba(0, 0, 0, 0.08);">
-                                        <th style="text-align: left; font-weight: 400; padding: 6px 8px;">{% trans "Period" %}</th>
-                                        <th style="font-weight: 400; padding: 6px 8px;">{% trans "Earned" %}</th>
-                                        <th style="font-weight: 400; padding: 6px 8px;">{% trans "Used" %}</th>
-                                        <th style="font-weight: 400; padding: 6px 8px;">{% trans "Available" %}</th>
-                                        <th style="font-weight: 400; padding: 6px 8px;">{% trans "Expires" %}</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for row in card.periods.rows %}
-                                        <tr style="text-align: right; border-bottom: 1px solid rgba(0, 0, 0, 0.08);">
-                                            <td style="text-align: left; padding: 8px;">{{ row.year }} ({% if row.label == "last year" %}{% trans "last year" %}{% else %}{% trans "this year" %}{% endif %})</td>
-                                            <td style="padding: 8px;">{{ row.earned|leave_days }}</td>
-                                            <td style="padding: 8px;">{{ row.used|leave_days }}</td>
-                                            <td style="padding: 8px;">{{ row.available|leave_days }}</td>
-                                            <td class="text-dark-200" style="padding: 8px; white-space: nowrap;">{{ row.expires }}</td>
-                                        </tr>
-                                    {% endfor %}
-                                    <tr class="font-bold" style="text-align: right;">
-                                        <td style="text-align: left; padding: 8px;">{% trans "Total" %}</td>
-                                        <td style="padding: 8px;">{{ card.periods.total.earned|leave_days }}</td>
-                                        <td style="padding: 8px;">{{ card.periods.total.used|leave_days }}</td>
-                                        <td class="text-sm" style="padding: 8px;">{{ card.periods.total.available|leave_days }}</td>
-                                        <td style="padding: 8px;"></td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    {% else %}
-                        <div class="flex justify-between mb-1 text-xs text-dark-200">
-                            <p>{% trans "Available leave days" %}</p>
-                            <p class="text-sm font-bold">
-                                {% if card.kind == "unlimited" %}{% trans "No limit" %}{% else %}{{ user_leave.total_leave_days|leave_days }}{% endif %}
-                            </p>
-                        </div>
-                        <div class="flex justify-between mb-1 text-xs text-dark-200">
-                            <p>{% trans "Total days taken" %}</p>
-                            <p class="text-sm font-bold">{{ card.total_taken|leave_days }}</p>
-                        </div>
-                    {% endif %}
-                </div>
-            </div>
+    {% comment %}
+        Accrual (vacation) cards stacked in the wide left column, the other
+        cards stacked on the right. Without a vacation balance, the other
+        cards fill the row.
+    {% endcomment %}
+    {% if cards.accrual %}
+        <div class="col-span-12 lg:col-span-8 xl:col-span-7 flex flex-col gap-3">
+            {% for item in cards.accrual %}
+                {% include "leave/user_leave/leave_balance_card.html" with user_leave=item.leave card=item.card stacked=True %}
+            {% endfor %}
         </div>
-    {% endfor %}
+        {% if cards.others %}
+            <div class="col-span-12 lg:col-span-4 xl:col-span-5 flex flex-col gap-3">
+                {% for item in cards.others %}
+                    {% include "leave/user_leave/leave_balance_card.html" with user_leave=item.leave card=item.card stacked=True %}
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% else %}
+        {% for item in cards.others %}
+            <div class="col-span-12 md:col-span-6 lg:col-span-4">
+                {% include "leave/user_leave/leave_balance_card.html" with user_leave=item.leave card=item.card %}
+            </div>
+        {% endfor %}
+    {% endif %}
 </div>
