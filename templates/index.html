@@ -51,6 +51,22 @@
 
     <!-- Popper.JS -->
     <!-- Bootstrap JS -->
+    <!-- Talently: ocultar Attendance del frontend -->
+    <style>
+        /* Boton Check-In / Check-Out del navbar */
+        #attendance-activity-container {
+            display: none !important;
+        }
+        /* Menu Attendance del sidebar (link + submenu) */
+        .oh-sidebar__menu-link[data-id="attendanceGenericNav"],
+        #attendanceGenericNav {
+            display: none !important;
+        }
+        .oh-sidebar__menu-item:has(> .oh-sidebar__menu-link[data-id="attendanceGenericNav"]) {
+            display: none !important;
+        }
+    </style>
+
     {% block styles %}
     {% endblock styles %}
 </head>
