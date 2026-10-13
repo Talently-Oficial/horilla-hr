@@ -108,12 +108,24 @@ def evaluate_leave_type_conditions(leave_type, employee):
     return True, None
 
 
+def allows_negative_balance(leave_type):
+    """
+    Accrual types (vacation) may be requested and approved beyond the current
+    balance: the deficit is left as a negative available_days and the next
+    monthly credits pay it back. Other limited types keep the balance check.
+    """
+    return is_accrual_leave_type(leave_type)
+
+
 def has_sufficient_leave_balance(available_leave, requested_days) -> bool:
     """
-    Gate used by leave_request_approve before deducting balance.
+    Gate used before approving (deducting) a request.
 
-    Returns True when available_days + carryforward_days covers requested_days.
+    Returns True when available_days + carryforward_days covers requested_days,
+    or when the leave type may go negative.
     """
+    if allows_negative_balance(getattr(available_leave, "leave_type_id", None)):
+        return True
     total = (available_leave.available_days or 0) + (
         available_leave.carryforward_days or 0
     )

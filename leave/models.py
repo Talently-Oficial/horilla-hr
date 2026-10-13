@@ -1635,7 +1635,12 @@ class LeaveRequest(HorillaModel):
 
         total_leave_days = available_days + carryforward_days + forcated_days
 
-        if not effective_requested_days <= total_leave_days:
+        from leave.services import allows_negative_balance
+
+        if (
+            not allows_negative_balance(leave_type)
+            and not effective_requested_days <= total_leave_days
+        ):
             raise ValidationError(
                 _("Does not have sufficient leave balance for the requested dates.")
             )

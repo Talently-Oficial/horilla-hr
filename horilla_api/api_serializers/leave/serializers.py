@@ -4,6 +4,7 @@ from rest_framework import serializers
 from employee.models import Employee
 from leave.methods import calculate_requested_days
 from leave.models import *
+from leave.services import allows_negative_balance, has_sufficient_leave_balance
 
 
 def leave_Validations(self, data):
@@ -71,7 +72,10 @@ def leave_Validations(self, data):
             _("There is a mismatch in the breakdown of the start date and end date.")
         )
 
-    if not effective_requested_days <= total_leave_days:
+    if (
+        not allows_negative_balance(leave_type_id)
+        and not effective_requested_days <= total_leave_days
+    ):
         raise serializers.ValidationError(
             _("Employee doesn't have enough leave days..")
         )
@@ -498,10 +502,9 @@ class LeaveRequestApproveSerializer(serializers.ModelSerializer):
         available_leave = AvailableLeave.objects.get(
             leave_type_id=leave_type_id, employee_id=employee_id
         )
-        total_available_leave = (
-            available_leave.available_days + available_leave.carryforward_days
-        )
-        if not total_available_leave >= leave_request.requested_days:
+        if not has_sufficient_leave_balance(
+            available_leave, leave_request.requested_days
+        ):
             raise serializers.ValidationError(
                 _("%(employee)s dont have enough leave days to approve the request..")
                 % {"employee": employee_id}

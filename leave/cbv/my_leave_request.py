@@ -32,7 +32,7 @@ from leave.methods import (
     holiday_dates_list,
 )
 from leave.models import AvailableLeave, LeaveRequest, LeaveType, leave_requested_dates
-from leave.services import deduct_leave_balance
+from leave.services import allows_negative_balance, deduct_leave_balance
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
 
@@ -377,7 +377,9 @@ class MyLeaveRequestForm(HorillaFormView):
                             for requested_date in requested_dates
                         )
                         requested_days = requested_days - company_leave_count
-                if requested_days <= available_total_leave:
+                if requested_days <= available_total_leave or (
+                    allows_negative_balance(leave_type)
+                ):
                     leave_request.save()
                     messages.success(
                         self.request, _("Leave request updated successfully")

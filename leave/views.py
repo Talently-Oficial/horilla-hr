@@ -67,7 +67,12 @@ from leave.methods import (
 )
 from leave.models import *
 from leave.models import leave_requested_dates
-from leave.services import deduct_leave_balance, evaluate_leave_type_conditions
+from leave.services import (
+    allows_negative_balance,
+    deduct_leave_balance,
+    evaluate_leave_type_conditions,
+    has_sufficient_leave_balance,
+)
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
 
@@ -1035,14 +1040,11 @@ def leave_request_approve(request, id, emp_id=None):
             return response
         return HorillaRedirect(request)
 
-    total_available_leave = (
-        available_leave.available_days + available_leave.carryforward_days
-    )
     send_notification = False
     approved = False
     error_message = ""
     if leave_request.status != "approved":
-        if total_available_leave >= leave_request.requested_days:
+        if has_sufficient_leave_balance(available_leave, leave_request.requested_days):
             deduct_leave_balance(leave_request, available_leave)
             leave_request.status = "approved"
             if not leave_request.multiple_approvals():
@@ -2522,7 +2524,9 @@ def user_request_update(request, id):
                                 for requested_date in requested_dates
                             )
                             requested_days = requested_days - company_leave_count
-                    if requested_days <= available_total_leave:
+                    if requested_days <= available_total_leave or (
+                        allows_negative_balance(leave_type)
+                    ):
                         leave_request.save()
                         messages.success(
                             request, _("Leave request updated successfully..")
