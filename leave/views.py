@@ -68,10 +68,10 @@ from leave.methods import (
 from leave.models import *
 from leave.models import leave_requested_dates
 from leave.services import (
-    allows_negative_balance,
     deduct_leave_balance,
     evaluate_leave_type_conditions,
     has_sufficient_leave_balance,
+    leave_balance_limit,
 )
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
@@ -1044,7 +1044,9 @@ def leave_request_approve(request, id, emp_id=None):
     approved = False
     error_message = ""
     if leave_request.status != "approved":
-        if has_sufficient_leave_balance(available_leave, leave_request.requested_days):
+        if has_sufficient_leave_balance(
+            available_leave, leave_request.requested_days, leave_request.start_date
+        ):
             deduct_leave_balance(leave_request, available_leave)
             leave_request.status = "approved"
             if not leave_request.multiple_approvals():
@@ -2485,9 +2487,8 @@ def user_request_update(request, id):
                     available_leave = AvailableLeave.objects.get(
                         employee_id=employee, leave_type_id=leave_type
                     )
-                    available_total_leave = (
-                        available_leave.available_days
-                        + available_leave.carryforward_days
+                    available_total_leave = leave_balance_limit(
+                        available_leave, start_date
                     )
                     requested_days = calculate_requested_days(
                         start_date, end_date, start_date_breakdown, end_date_breakdown
@@ -2524,9 +2525,7 @@ def user_request_update(request, id):
                                 for requested_date in requested_dates
                             )
                             requested_days = requested_days - company_leave_count
-                    if requested_days <= available_total_leave or (
-                        allows_negative_balance(leave_type)
-                    ):
+                    if requested_days <= available_total_leave:
                         leave_request.save()
                         messages.success(
                             request, _("Leave request updated successfully..")

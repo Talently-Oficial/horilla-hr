@@ -130,15 +130,24 @@ class LeaveRequestApproveBalanceTests(TestCase):
         self.assertEqual(avail.available_days, 1)
 
 
-class NegativeVacationBalanceTests(TestCase):
-    """Vacation (an accrual type) may be requested and approved beyond the balance."""
+class ProjectedVacationBalanceTests(TestCase):
+    """
+    Vacation (an accrual type) may be requested up to the balance it will have
+    on the start date: today's balance plus the monthly credits still to come.
+    """
 
     def setUp(self):
+        from employee.models import EmployeeWorkInformation
         from horilla.testkit import make_company, make_employee
         from leave.models import AvailableLeave, LeaveType
 
-        company = make_company("Negative Bal Co")
-        self.employee = make_employee(company=company, email="negbal@test.horilla")
+        company = make_company("Projected Bal Co")
+        self.employee = make_employee(company=company, email="projbal@test.horilla")
+        # Joined today: credits fall one, two, three... months from now.
+        EmployeeWorkInformation.objects.filter(employee_id=self.employee).update(
+            date_joining=date.today()
+        )
+        self.employee.employee_work_info.refresh_from_db()
         self.vacation = LeaveType.objects.create(name="Vacaciones", total_days=0)
         self.other = LeaveType.objects.create(name="Approve Balance Leave", total_days=0)
         self.vacation_balance = AvailableLeave.objects.create(
@@ -154,7 +163,7 @@ class NegativeVacationBalanceTests(TestCase):
             carryforward_days=0,
         )
 
-    def _request(self, leave_type, days, offset=30):
+    def _request(self, leave_type, days, offset):
         # LeaveRequest.save() recomputes requested_days from the dates, so the
         # range spans `days` calendar days.
         from leave.models import LeaveRequest
@@ -168,24 +177,53 @@ class NegativeVacationBalanceTests(TestCase):
             start_date_breakdown="full_day",
             end_date_breakdown="full_day",
             requested_days=days,
-            description="negative balance test",
+            description="projected balance test",
             status="requested",
             approved_available_days=0,
             approved_carryforward_days=0,
         )
 
-    def test_gate_lets_vacation_go_negative(self):
-        from leave.services import allows_negative_balance, has_sufficient_leave_balance
+    def test_limit_adds_the_credits_still_to_come_up_to_the_start_date(self):
+        from employee.models import EmployeeWorkInformation
+        from leave.services import leave_balance_limit
 
-        self.assertTrue(allows_negative_balance(self.vacation))
-        self.assertFalse(allows_negative_balance(self.other))
-        self.assertTrue(has_sufficient_leave_balance(self.vacation_balance, 5))
-        self.assertFalse(has_sufficient_leave_balance(self.other_balance, 5))
+        # Flor: joined Jul 6, 5.49 days on Oct 13.
+        EmployeeWorkInformation.objects.filter(employee_id=self.employee).update(
+            date_joining=date(2026, 7, 6)
+        )
+        self.vacation_balance.employee_id.employee_work_info.refresh_from_db()
+        self.vacation_balance.available_days = 5.49
+        today = date(2026, 10, 13)
+        # Nov 6, Dec 6 and Jan 6 (the start date itself) are still to come.
+        self.assertAlmostEqual(
+            leave_balance_limit(self.vacation_balance, date(2027, 1, 6), today), 10.98
+        )
+        self.assertAlmostEqual(
+            leave_balance_limit(self.vacation_balance, date(2026, 12, 1), today), 7.32
+        )
+        self.assertAlmostEqual(
+            leave_balance_limit(self.vacation_balance, date(2026, 10, 20), today), 5.49
+        )
+        # Other types and calls without a date keep today's balance.
+        self.assertEqual(
+            leave_balance_limit(self.other_balance, date(2027, 1, 6), today), 2
+        )
+        self.assertAlmostEqual(leave_balance_limit(self.vacation_balance), 5.49)
+
+    def test_gate_uses_the_projected_balance(self):
+        from leave.services import has_sufficient_leave_balance
+
+        far = date.today() + timedelta(days=95)  # three credits away: 2 + 5.49
+        near = date.today() + timedelta(days=10)  # no credit yet
+        self.assertTrue(has_sufficient_leave_balance(self.vacation_balance, 7, far))
+        self.assertFalse(has_sufficient_leave_balance(self.vacation_balance, 8, far))
+        self.assertFalse(has_sufficient_leave_balance(self.vacation_balance, 3, near))
+        self.assertFalse(has_sufficient_leave_balance(self.other_balance, 3, far))
 
     def test_approve_leaves_the_deficit_as_negative_available_days(self):
         from horilla_api.api_views.leave.views import LeaveRequestApproveAPIView
 
-        req = self._request(self.vacation, 5)
+        req = self._request(self.vacation, 5, offset=95)
         LeaveRequestApproveAPIView().leave_approve_calculation(
             req, self.vacation_balance
         )
@@ -194,20 +232,24 @@ class NegativeVacationBalanceTests(TestCase):
         self.assertEqual(self.vacation_balance.total_leave_days, 0)
         self.assertEqual(req.approved_available_days, 5)
 
-    def test_api_approve_serializer_accepts_vacation_beyond_balance(self):
+    def test_api_approve_serializer_uses_the_projected_balance(self):
         from horilla_api.api_serializers.leave.serializers import (
             LeaveRequestApproveSerializer,
         )
 
-        vacation = self._request(self.vacation, 5)
-        vacation.save()
-        self.assertTrue(LeaveRequestApproveSerializer(vacation, data={}).is_valid())
+        within = self._request(self.vacation, 5, offset=95)
+        within.save()
+        self.assertTrue(LeaveRequestApproveSerializer(within, data={}).is_valid())
 
-        other = self._request(self.other, 5, offset=40)
+        beyond = self._request(self.vacation, 8, offset=110)
+        beyond.save()
+        self.assertFalse(LeaveRequestApproveSerializer(beyond, data={}).is_valid())
+
+        other = self._request(self.other, 5, offset=130)
         other.save()
         self.assertFalse(LeaveRequestApproveSerializer(other, data={}).is_valid())
 
-    def test_api_create_validation_accepts_vacation_beyond_balance(self):
+    def test_api_create_validation_uses_the_projected_balance(self):
         # The path the Slack bot uses to create requests.
         from types import SimpleNamespace
 
@@ -215,13 +257,21 @@ class NegativeVacationBalanceTests(TestCase):
 
         from horilla_api.api_serializers.leave.serializers import leave_Validations
 
-        start = date.today() + timedelta(days=60)
-        data = {
-            "employee_id": self.employee,
-            "start_date": start,
-            "end_date": start + timedelta(days=4),
-        }
         stub = SimpleNamespace(instance=None)
-        leave_Validations(stub, {**data, "leave_type_id": self.vacation})
+
+        def data(leave_type, days, offset):
+            start = date.today() + timedelta(days=offset)
+            return {
+                "employee_id": self.employee,
+                "leave_type_id": leave_type,
+                "start_date": start,
+                "end_date": start + timedelta(days=days - 1),
+            }
+
+        leave_Validations(stub, data(self.vacation, 5, 95))
         with self.assertRaises(serializers.ValidationError):
-            leave_Validations(stub, {**data, "leave_type_id": self.other})
+            leave_Validations(stub, data(self.vacation, 8, 95))
+        with self.assertRaises(serializers.ValidationError):
+            leave_Validations(stub, data(self.vacation, 5, 10))
+        with self.assertRaises(serializers.ValidationError):
+            leave_Validations(stub, data(self.other, 5, 95))

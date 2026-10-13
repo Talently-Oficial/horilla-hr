@@ -7,7 +7,7 @@ Condition evaluation follows the same pattern as payroll allowance eligibility c
 
 import calendar
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
@@ -108,28 +108,43 @@ def evaluate_leave_type_conditions(leave_type, employee):
     return True, None
 
 
-def allows_negative_balance(leave_type):
+def leave_balance_limit(available_leave, start_date=None, today=None):
     """
-    Accrual types (vacation) may be requested and approved beyond the current
-    balance: the deficit is left as a negative available_days and the next
-    monthly credits pay it back. Other limited types keep the balance check.
+    Most days a request starting on `start_date` may take.
+
+    That is the current balance (available_days + carryforward_days) and, for
+    accrual types (vacation), the monthly credits still to come up to the start
+    date: the job credits them on each joining-date anniversary, which Horilla's
+    own forecast doesn't know about. A request within that limit may leave the
+    balance negative when approved; the upcoming credits pay it back.
     """
-    return is_accrual_leave_type(leave_type)
+    limit = (available_leave.available_days or 0) + (
+        available_leave.carryforward_days or 0
+    )
+    leave_type = getattr(available_leave, "leave_type_id", None)
+    if start_date is None or not is_accrual_leave_type(leave_type):
+        return limit
+    if isinstance(start_date, datetime):
+        start_date = start_date.date()
+    today = today or date.today()
+    work_info = getattr(available_leave.employee_id, "employee_work_info", None)
+    date_joining = getattr(work_info, "date_joining", None)
+    upcoming = sum(
+        1 for d in accrual_credit_dates(date_joining, start_date) if d > today
+    )
+    return limit + upcoming * LEAVE_MONTHLY_ACCRUAL
 
 
-def has_sufficient_leave_balance(available_leave, requested_days) -> bool:
+def has_sufficient_leave_balance(available_leave, requested_days, start_date=None) -> bool:
     """
     Gate used before approving (deducting) a request.
 
-    Returns True when available_days + carryforward_days covers requested_days,
-    or when the leave type may go negative.
+    Returns True when the balance, projected to `start_date` for accrual types,
+    covers requested_days.
     """
-    if allows_negative_balance(getattr(available_leave, "leave_type_id", None)):
-        return True
-    total = (available_leave.available_days or 0) + (
-        available_leave.carryforward_days or 0
+    return leave_balance_limit(available_leave, start_date) >= float(
+        requested_days or 0
     )
-    return total >= float(requested_days or 0)
 
 
 def deduct_leave_balance(leave_request, available_leave):

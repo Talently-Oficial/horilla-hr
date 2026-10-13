@@ -936,7 +936,7 @@ class LeaveRequestBulkApproveDeleteAPIview(APIView):
                 leave_type_id=leave_type_id, employee_id=employee_id
             )
             if has_sufficient_leave_balance(
-                available_leave, leave_request.requested_days
+                available_leave, leave_request.requested_days, leave_request.start_date
             ):
                 self.leave_approve_calculation(leave_request, available_leave)
                 leave_request.status = "approved"
