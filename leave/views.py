@@ -71,7 +71,7 @@ from leave.services import (
     deduct_leave_balance,
     evaluate_leave_type_conditions,
     has_sufficient_leave_balance,
-    leave_balance_limit,
+    request_balance_limit,
 )
 from leave.threading import LeaveMailSendThread
 from notifications.signals import notify
@@ -2323,12 +2323,6 @@ def user_leave_request(request, id):
         end_date = datetime.strptime(request.POST.get("end_date"), "%Y-%m-%d")
         start_date_breakdown = request.POST.get("start_date_breakdown")
         end_date_breakdown = request.POST.get("end_date_breakdown")
-        available_leave = AvailableLeave.objects.get(
-            employee_id=employee, leave_type_id=leave_type
-        )
-        available_total_leave = (
-            available_leave.available_days + available_leave.carryforward_days
-        )
         requested_days = calculate_requested_days(
             start_date, end_date, start_date_breakdown, end_date_breakdown
         )
@@ -2487,8 +2481,8 @@ def user_request_update(request, id):
                     available_leave = AvailableLeave.objects.get(
                         employee_id=employee, leave_type_id=leave_type
                     )
-                    available_total_leave = leave_balance_limit(
-                        available_leave, start_date
+                    available_total_leave = request_balance_limit(
+                        available_leave, start_date, exclude_request=leave_request
                     )
                     requested_days = calculate_requested_days(
                         start_date, end_date, start_date_breakdown, end_date_breakdown

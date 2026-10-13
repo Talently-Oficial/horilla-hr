@@ -4,7 +4,7 @@ from rest_framework import serializers
 from employee.models import Employee
 from leave.methods import calculate_requested_days
 from leave.models import *
-from leave.services import has_sufficient_leave_balance, leave_balance_limit
+from leave.services import has_sufficient_leave_balance, request_balance_limit
 
 
 def leave_Validations(self, data):
@@ -48,7 +48,9 @@ def leave_Validations(self, data):
         requested_days=requested_days,
     )
 
-    total_leave_days = leave_balance_limit(available_leave, start_date)
+    total_leave_days = request_balance_limit(
+        available_leave, start_date, exclude_request=self.instance
+    )
     errors = {}
     # checking if there is any requested days is overlapping with the existing leave request
     leave_requests = employee.leaverequest_set.filter(

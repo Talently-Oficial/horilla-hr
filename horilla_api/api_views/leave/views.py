@@ -932,9 +932,10 @@ class LeaveRequestBulkApproveDeleteAPIview(APIView):
         for leave_request in leave_requests:
             employee_id = leave_request.employee_id
             leave_type_id = leave_request.leave_type_id
-            available_leave = AvailableLeave.objects.get(
-                leave_type_id=leave_type_id, employee_id=employee_id
-            )
+            # One query per request: the projection reads the joining date.
+            available_leave = AvailableLeave.objects.select_related(
+                "leave_type_id", "employee_id__employee_work_info"
+            ).get(leave_type_id=leave_type_id, employee_id=employee_id)
             if has_sufficient_leave_balance(
                 available_leave, leave_request.requested_days, leave_request.start_date
             ):

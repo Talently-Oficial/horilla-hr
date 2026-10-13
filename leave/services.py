@@ -108,7 +108,38 @@ def evaluate_leave_type_conditions(leave_type, employee):
     return True, None
 
 
-def leave_balance_limit(available_leave, start_date=None, today=None):
+def employee_date_joining(employee):
+    work_info = getattr(employee, "employee_work_info", None)
+    return getattr(work_info, "date_joining", None)
+
+
+def usable_carryforward_days(available_leave):
+    """Carryforward days a request may use, capped like LeaveRequest.clean() does."""
+    leave_type = available_leave.leave_type_id
+    carryforward_days = available_leave.carryforward_days or 0
+    if leave_type.carryforward_type in ["carryforward", "carryforward expire"]:
+        return min(carryforward_days, leave_type.carryforward_max or 0)
+    if leave_type.carryforward_type == "no carryforward":
+        return 0
+    return carryforward_days
+
+
+def upcoming_accrual_credits(available_leave, start_date, today, date_joining):
+    """
+    Monthly credits the accrual job will still add up to `start_date`.
+
+    Today's credit counts until the job has run: it stamps reset_date with the
+    day it credits, and skips a balance whose reset_date is already today.
+    """
+    credited_today = available_leave.reset_date == today
+    return sum(
+        1
+        for d in accrual_credit_dates(date_joining, start_date)
+        if d > today or (d == today and not credited_today)
+    )
+
+
+def leave_balance_limit(available_leave, start_date, today=None, date_joining=None):
     """
     Most days a request starting on `start_date` may take.
 
@@ -117,34 +148,71 @@ def leave_balance_limit(available_leave, start_date=None, today=None):
     date: the job credits them on each joining-date anniversary, which Horilla's
     own forecast doesn't know about. A request within that limit may leave the
     balance negative when approved; the upcoming credits pay it back.
+
+    `date_joining` can be passed in to avoid the queries.
     """
-    limit = (available_leave.available_days or 0) + (
-        available_leave.carryforward_days or 0
-    )
     leave_type = getattr(available_leave, "leave_type_id", None)
-    if start_date is None or not is_accrual_leave_type(leave_type):
-        return limit
+    if not is_accrual_leave_type(leave_type):
+        return (available_leave.available_days or 0) + (
+            available_leave.carryforward_days or 0
+        )
     if isinstance(start_date, datetime):
         start_date = start_date.date()
     today = today or date.today()
-    work_info = getattr(available_leave.employee_id, "employee_work_info", None)
-    date_joining = getattr(work_info, "date_joining", None)
-    upcoming = sum(
-        1 for d in accrual_credit_dates(date_joining, start_date) if d > today
+    if date_joining is None:
+        date_joining = employee_date_joining(available_leave.employee_id)
+    upcoming = upcoming_accrual_credits(
+        available_leave, start_date, today, date_joining
     )
-    return limit + upcoming * LEAVE_MONTHLY_ACCRUAL
+    return (
+        (available_leave.available_days or 0)
+        + usable_carryforward_days(available_leave)
+        + upcoming * LEAVE_MONTHLY_ACCRUAL
+    )
 
 
-def has_sufficient_leave_balance(available_leave, requested_days, start_date=None) -> bool:
+def pending_leave_days(available_leave, exclude_request=None):
+    """
+    Days already asked for in requests still waiting for approval.
+
+    Only for accrual types: their limit includes future credits, so without
+    this two pending requests could each be promised the same credits.
+    """
+    from leave.models import LeaveRequest
+
+    if not is_accrual_leave_type(getattr(available_leave, "leave_type_id", None)):
+        return 0
+    pending = LeaveRequest.objects.filter(
+        employee_id=available_leave.employee_id,
+        leave_type_id=available_leave.leave_type_id,
+        status="requested",
+    )
+    if exclude_request is not None and exclude_request.pk:
+        pending = pending.exclude(pk=exclude_request.pk)
+    return sum(pending.values_list("requested_days", flat=True))
+
+
+def request_balance_limit(available_leave, start_date, exclude_request=None, today=None):
+    """
+    Limit for creating or editing a request: leave_balance_limit() minus the
+    days of the employee's other pending requests of the same type.
+    """
+    return leave_balance_limit(available_leave, start_date, today) - pending_leave_days(
+        available_leave, exclude_request
+    )
+
+
+def has_sufficient_leave_balance(
+    available_leave, requested_days, start_date, today=None, date_joining=None
+) -> bool:
     """
     Gate used before approving (deducting) a request.
 
     Returns True when the balance, projected to `start_date` for accrual types,
     covers requested_days.
     """
-    return leave_balance_limit(available_leave, start_date) >= float(
-        requested_days or 0
-    )
+    limit = leave_balance_limit(available_leave, start_date, today, date_joining)
+    return limit >= float(requested_days or 0)
 
 
 def deduct_leave_balance(leave_request, available_leave):
@@ -275,8 +343,7 @@ def accrual_periods(available_leave, today=None, date_joining=None, approved=Non
     """
     today = today or date.today()
     if date_joining is None:
-        work_info = getattr(available_leave.employee_id, "employee_work_info", None)
-        date_joining = getattr(work_info, "date_joining", None)
+        date_joining = employee_date_joining(available_leave.employee_id)
     if approved is None:
         approved = approved_leave_days(
             available_leave.employee_id, available_leave.leave_type_id
