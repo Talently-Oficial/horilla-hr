@@ -315,6 +315,12 @@
             background: linear-gradient(90deg, #3b82f6, #e54f38);
         }
 
+        /* Talently: ocultar Attendance del dashboard */
+        .md-chart-card[data-chart-section='attendance'],
+        .md-kpi-card[data-kpi='attendance'] {
+            display: none !important;
+        }
+
         .md-chart-card--wide {
             grid-column: span 2;
         }
@@ -1859,11 +1865,12 @@
 
             const emptyHtml = (msg) => `<div class="md-empty"><img src="/static/images/ui/no_records.svg" alt="">${msg}</div>`;
             const hideCard  = id => document.querySelector(`[data-chart-id="${id}"]`)?.classList.add('md-chart-card--hidden');
-            const kpiCard   = (href, perm, colorClass, svg, label, value, sub) => {
+            const kpiCard   = (href, perm, colorClass, svg, label, value, sub, key) => {
+                const attrs = key ? ` data-kpi="${key}"` : '';
                 const body = `<div class="md-kpi-card__icon ${colorClass}">${svg}</div><div class="md-kpi-card__label">${label}</div><div class="md-kpi-card__value">${value}</div>`;
                 const subHtml = `<div class="md-kpi-card__sub">${sub}</div>`;
-                if (!perm) return `<div class="md-kpi-card">${body}${subHtml}</div>`;
-                return `<div class="md-kpi-card"><a href="${href}" class="md-kpi-card__hit">${body}</a>${subHtml}</div>`;
+                if (!perm) return `<div class="md-kpi-card"${attrs}>${body}${subHtml}</div>`;
+                return `<div class="md-kpi-card"${attrs}><a href="${href}" class="md-kpi-card__hit">${body}</a>${subHtml}</div>`;
             };
 
             document.getElementById('md-date').textContent = new Date().toLocaleDateString('en-US', {
@@ -2123,6 +2130,8 @@
                 // Build from current DOM + prefs
                 const allCards = {};
                 document.querySelectorAll('#md-charts-container [data-chart-id]').forEach(c => {
+                    // Talently: Attendance esta oculto, no se ofrece en Customize
+                    if (c.dataset.chartSection === 'attendance') return;
                     allCards[c.dataset.chartId] = {
                         id: c.dataset.chartId,
                         label: c.dataset.chartLabel,
@@ -2348,7 +2357,7 @@
                         const recruSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>';
                         document.getElementById('md-kpi-grid').innerHTML =
                             kpiCard("{% url 'employee-view' %}?is_active=True&filter_applied=on",   PERM.employee,    'md-kpi-card__icon--indigo', empSvg,   '{% trans "Total Employees" %}',   data.total_employees,   data.new_joiners > 0 ? '<span class="md-badge md-badge--green">+' + data.new_joiners + ' {% trans "this month" %}</span>' : '<span style="opacity:0.5">{% trans "No new joiners" %}</span>') +
-                            kpiCard("{% url 'attendance-view' %}?attendance_date={% now 'Y-m-d' %}&filter_applied=on",  PERM.attendance,  'md-kpi-card__icon--green',  attSvg,   '{% trans "Present Today" %}',     data.present_today,     '<span class="md-badge ' + (data.attendance_rate >= 80 ? 'md-badge--green' : 'md-badge--amber') + '">' + data.attendance_rate + '% {% trans "of expected" %}</span>' + (data.not_checked_in > 0 ? ' <span class="md-badge md-badge--amber">' + data.not_checked_in + ' {% trans "not checked in" %}</span>' : '')) +
+                            kpiCard("{% url 'attendance-view' %}?attendance_date={% now 'Y-m-d' %}&filter_applied=on",  PERM.attendance,  'md-kpi-card__icon--green',  attSvg,   '{% trans "Present Today" %}',     data.present_today,     '<span class="md-badge ' + (data.attendance_rate >= 80 ? 'md-badge--green' : 'md-badge--amber') + '">' + data.attendance_rate + '% {% trans "of expected" %}</span>' + (data.not_checked_in > 0 ? ' <span class="md-badge md-badge--amber">' + data.not_checked_in + ' {% trans "not checked in" %}</span>' : ''), 'attendance') +
                             kpiCard(`{% url 'request-view' %}?status=approved&today_leave=true&filter_applied=on`,     PERM.leave,       'md-kpi-card__icon--amber',  leaveSvg, '{% trans "On Leave" %}',           data.on_leave,          data.pending_leaves > 0 ? '<a href="{% url "request-view" %}?status=requested&filter_applied=on" class="md-badge md-badge--amber">' + data.pending_leaves + ' {% trans "pending" %}</a>' : '<span style="opacity:0.5">{% trans "No pending" %}</span>') +
                             (PERM.recruitment ? kpiCard("{% url 'recruitment-view' %}?closed=false&filter_applied=on", true, 'md-kpi-card__icon--purple', recruSvg, '{% trans "Open Recruitments" %}', data.open_recruitments, '<span style="opacity:0.5">{% trans "Active hiring" %}</span>') : '');
                     });
