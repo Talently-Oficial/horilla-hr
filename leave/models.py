@@ -1633,7 +1633,17 @@ class LeaveRequest(HorillaModel):
         elif carryforward_type == "no carryforward":
             carryforward_days = 0
 
-        total_leave_days = available_days + carryforward_days + forcated_days
+        from leave.services import is_accrual_leave_type, request_balance_limit
+
+        if is_accrual_leave_type(leave_type):
+            # Credited by the monthly accrual job, not by Horilla's reset, so
+            # project those credits up to the start date instead (same
+            # carryforward cap as above, minus other pending requests).
+            total_leave_days = request_balance_limit(
+                available_leave, self.start_date, exclude_request=self
+            )
+        else:
+            total_leave_days = available_days + carryforward_days + forcated_days
 
         if not effective_requested_days <= total_leave_days:
             raise ValidationError(

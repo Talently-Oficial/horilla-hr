@@ -17,7 +17,7 @@ from horilla_api.api_serializers.leave.serializers import *
 from leave.filters import *
 from leave.methods import filter_conditional_leave_request
 from leave.models import AvailableLeave, LeaveAllocationRequest, LeaveRequest, LeaveType
-from leave.services import deduct_leave_balance
+from leave.services import deduct_leave_balance, has_sufficient_leave_balance
 from notifications.signals import notify
 
 from ...api_decorators.base.decorators import manager_permission_required
@@ -932,13 +932,13 @@ class LeaveRequestBulkApproveDeleteAPIview(APIView):
         for leave_request in leave_requests:
             employee_id = leave_request.employee_id
             leave_type_id = leave_request.leave_type_id
-            available_leave = AvailableLeave.objects.get(
-                leave_type_id=leave_type_id, employee_id=employee_id
-            )
-            total_available_leave = (
-                available_leave.available_days + available_leave.carryforward_days
-            )
-            if total_available_leave >= leave_request.requested_days:
+            # One query per request: the projection reads the joining date.
+            available_leave = AvailableLeave.objects.select_related(
+                "leave_type_id", "employee_id__employee_work_info"
+            ).get(leave_type_id=leave_type_id, employee_id=employee_id)
+            if has_sufficient_leave_balance(
+                available_leave, leave_request.requested_days, leave_request.start_date
+            ):
                 self.leave_approve_calculation(leave_request, available_leave)
                 leave_request.status = "approved"
                 leave_request.save()
