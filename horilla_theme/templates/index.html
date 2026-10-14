@@ -222,6 +222,20 @@
             </style>
         {% endwith %}
 
+        <!-- Talently: ocultar Attendance del frontend -->
+        <style>
+            /* Boton Check-In / Check-Out del header */
+            #attendance-activity-container {
+                display: none !important;
+            }
+            /* Item Attendance del sidebar (boton + submenu) */
+            .sidebar-item:has(> .sideboxmain[data-menu="Attendance"]),
+            .sidebar-item:has(> .sideboxmain[data-menu="Asistencia"]),
+            .sidebar-item:has(img[src*="attendances.svg"]) {
+                display: none !important;
+            }
+        </style>
+
         {% block styles %}
             <!-- Page-specific styles (optional) -->
         {% endblock %}
