@@ -7,7 +7,7 @@ Condition evaluation follows the same pattern as payroll allowance eligibility c
 
 import calendar
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
@@ -238,8 +238,14 @@ def deduct_leave_balance(leave_request, available_leave):
 
 
 # Talently accrual policy: days are credited each month on the joining-date
-# anniversary; days earned in year N can be used until Dec 31 of N+1.
+# anniversary, and belong to the labor year they land in -- one joining-date
+# anniversary to the next. The days a labor year earns expire two labor years
+# after it started, so a day lives between one and two years.
 LEAVE_MONTHLY_ACCRUAL = getattr(settings, "LEAVE_MONTHLY_ACCRUAL", 1.83)
+
+# Labor years a day stays usable, counted from the start of the labor year that
+# earned it: joined Mar 15, 2025 -> what that year earns expires Mar 15, 2027.
+LEAVE_EXPIRY_LABOR_YEARS = getattr(settings, "LEAVE_EXPIRY_LABOR_YEARS", 2)
 
 # Leave types (lowercased names) that follow that policy. limit_leave=True,
 # reset=False are the LeaveType defaults, so the configuration alone can't
@@ -309,9 +315,34 @@ def accrual_credit_dates(date_joining, until):
         dates.append(credit)
 
 
-def accrual_credits_in_year(date_joining, year, today):
-    """Monthly accrual credits dated in `year`, up to today."""
-    return sum(1 for d in accrual_credit_dates(date_joining, today) if d.year == year)
+def anniversary(date_joining, years):
+    """
+    The joining-date anniversary `years` years after joining.
+
+    A Feb 29 joiner falls back to Feb 28 on common years, the same way the
+    monthly credits use the last day of a short month.
+    """
+    year = date_joining.year + years
+    day = min(date_joining.day, calendar.monthrange(year, date_joining.month)[1])
+    return date(year, date_joining.month, day)
+
+
+def labor_year_index(date_joining, when):
+    """
+    Which labor year `when` falls in: 0 from the joining date to the day before
+    the first anniversary, 1 until the second, and so on.
+    """
+    years = when.year - date_joining.year
+    if years > 0 and anniversary(date_joining, years) > when:
+        years -= 1
+    return max(years, 0)
+
+
+def labor_year_label(date_joining, index):
+    """'Mar 15, 2025 - Mar 14, 2026' for the labor year at `index`."""
+    start = anniversary(date_joining, index)
+    end = anniversary(date_joining, index + 1) - timedelta(days=1)
+    return f"{format_long_date(start)} - {format_long_date(end)}"
 
 
 def approved_leave_days(employee_id, leave_type_id=None):
@@ -324,19 +355,46 @@ def approved_leave_days(employee_id, leave_type_id=None):
     return list(qs.values_list("start_date", "requested_days", "leave_type_id"))
 
 
+def _periods_without_joining_date(balance):
+    """
+    Without a joining date there are no labor years to split the balance into:
+    one open period, with no expiry, so the card still adds up to the balance.
+    """
+    row = {
+        "index": 0,
+        "label": "current",
+        "period": "",
+        "earned": round(max(balance, 0), 2),
+        "used": round(max(-balance, 0), 2),
+        "available": round(balance, 2),
+        "expires": "",
+    }
+    return {
+        "rows": [row],
+        "total": {key: row[key] for key in ("earned", "used", "available")},
+    }
+
+
 def accrual_periods(available_leave, today=None, date_joining=None, approved=None):
     """
-    Accrual balance split into last year's and this year's period, oldest first.
+    Accrual balance split into the previous and the current labor year, oldest
+    first.
 
-    Earned and Used come from the policy, not from how the balance happens to be
-    split between available_days and carryforward_days: monthly credits by
-    year, and approved requests consuming the oldest period still valid (days
-    approved for the future count from today, when they were deducted). Days
-    asked for with nothing left are owed against this year. Whatever the real
-    balance holds above that (allocations, manual top-ups) is shown as earned
-    this year, and whatever it lacks (manual cuts, history missing from
-    Horilla) as used this year. So Earned and Used are never negative, every
-    row closes as Earned - Used = Available, and the total is the real balance.
+    A labor year runs from one joining-date anniversary to the next, and the
+    days it earns expire two years after it started: joined Mar 15, 2025, the
+    days earned up to Mar 14, 2026 can be taken until Mar 14, 2027.
+
+    Earned and Used come from the policy, not from how the balance happens to
+    be split between available_days and carryforward_days: monthly credits by
+    labor year, and approved requests consuming the oldest period still valid
+    (days approved for the future count from today, when they were deducted).
+    Days asked for with nothing left are owed against the current period.
+    Whatever the real balance holds above that (allocations, manual top-ups,
+    days a period has lost to expiry that the balance has not given up yet) is
+    shown as earned in the current period, and whatever it lacks (manual cuts,
+    history missing from Horilla) as used there. So Earned and Used are never
+    negative, every row closes as Earned - Used = Available, and the total is
+    the real balance.
 
     `date_joining` and `approved` ((start_date, requested_days, ...) tuples) can
     be passed in to avoid the queries.
@@ -348,52 +406,69 @@ def accrual_periods(available_leave, today=None, date_joining=None, approved=Non
         approved = approved_leave_days(
             available_leave.employee_id, available_leave.leave_type_id
         )
+    balance = (available_leave.available_days or 0) + (
+        available_leave.carryforward_days or 0
+    )
+    if not date_joining:
+        return _periods_without_joining_date(balance)
 
-    events = [(d, 0, LEAVE_MONTHLY_ACCRUAL) for d in accrual_credit_dates(date_joining, today)]
+    def expires_on(index):
+        return anniversary(date_joining, index + LEAVE_EXPIRY_LABOR_YEARS)
+
+    events = [
+        (d, 0, LEAVE_MONTHLY_ACCRUAL)
+        for d in accrual_credit_dates(date_joining, today)
+    ]
     events += [(min(row[0], today), 1, float(row[1] or 0)) for row in approved]
     events.sort(key=lambda event: (event[0], event[1]))
 
     earned, used, left = defaultdict(float), defaultdict(float), {}
     owed = 0.0
     for when, is_request, days in events:
-        for year in [y for y in left if y < when.year - 1]:
-            del left[year]  # expired on Jan 1 of year + 2
+        for index in [i for i in left if expires_on(i) <= when]:
+            del left[index]
         if not is_request:
-            earned[when.year] += days
+            index = labor_year_index(date_joining, when)
+            earned[index] += days
             repay = min(owed, days)
             owed -= repay
-            used[when.year] += repay
-            left[when.year] = left.get(when.year, 0.0) + days - repay
+            used[index] += repay
+            left[index] = left.get(index, 0.0) + days - repay
             continue
-        for year in sorted(left):
-            take = min(left[year], days)
+        for index in sorted(left):
+            take = min(left[index], days)
             if take > 0:
-                left[year] -= take
-                used[year] += take
+                left[index] -= take
+                used[index] += take
                 days -= take
         owed += days
 
-    last, this = today.year - 1, today.year
-    used[this] += owed
-    balance = (available_leave.available_days or 0) + (available_leave.carryforward_days or 0)
-    adjustment = balance - sum(earned[y] - used[y] for y in (last, this))
+    current = labor_year_index(date_joining, today)
+    previous = current - 1
+    used[current] += owed
+    adjustment = balance - sum(
+        earned[i] - used[i] for i in (previous, current) if i >= 0
+    )
     if adjustment >= 0:
-        earned[this] += adjustment  # allocations, manual top-ups
+        earned[current] += adjustment  # allocations, top-ups, days still on the balance
     else:
-        used[this] -= adjustment  # manual cuts, history missing from Horilla
+        used[current] -= adjustment  # manual cuts, history missing from Horilla
 
     rows = []
-    for year, label in ((last, "last year"), (this, "this year")):
-        if label == "last year" and not round(earned[year], 2) and not round(used[year], 2):
+    for index in (previous, current):
+        if index < 0:
+            continue
+        if index == previous and not round(earned[index], 2) and not round(used[index], 2):
             continue
         rows.append(
             {
-                "year": year,
-                "label": label,
-                "earned": round(earned[year], 2),
-                "used": round(used[year], 2),
-                "available": round(earned[year] - used[year], 2),
-                "expires": format_long_date(date(year + 2, 1, 1)),
+                "index": index,
+                "label": "previous" if index == previous else "current",
+                "period": labor_year_label(date_joining, index),
+                "earned": round(earned[index], 2),
+                "used": round(used[index], 2),
+                "available": round(earned[index] - used[index], 2),
+                "expires": format_long_date(expires_on(index)),
             }
         )
     total = {

@@ -1,4 +1,4 @@
-"""Balance cards in My Leave Requests and the vacation donut: yearly periods and card kinds."""
+"""Balance cards in My Leave Requests and the vacation donut: labor-year periods and card kinds."""
 
 from datetime import date, timedelta
 from types import SimpleNamespace
@@ -9,9 +9,12 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from leave.services import (
-    accrual_credits_in_year,
+    accrual_credit_dates,
     accrual_periods,
+    anniversary,
     format_long_date,
+    labor_year_index,
+    labor_year_label,
     leave_card_kind,
     leave_card_title,
 )
@@ -20,7 +23,9 @@ TODAY = date(2026, 10, 5)
 
 
 def _balance(available, carryforward=0):
-    return SimpleNamespace(available_days=available, carryforward_days=carryforward)
+    return SimpleNamespace(
+        available_days=available, carryforward_days=carryforward, employee_id=None
+    )
 
 
 def _periods(balance, joined, approved=()):
@@ -31,62 +36,110 @@ def _periods(balance, joined, approved=()):
 
 class AccrualPeriodTests(SimpleTestCase):
     def test_credits_start_the_month_after_joining(self):
-        joined = date(2025, 8, 20)
-        self.assertEqual(accrual_credits_in_year(joined, 2025, TODAY), 4)  # Sep-Dec
-        self.assertEqual(accrual_credits_in_year(joined, 2026, TODAY), 9)  # Jan-Sep 20
+        credits = accrual_credit_dates(date(2025, 8, 20), TODAY)
+        self.assertEqual(credits[0], date(2025, 9, 20))
+        self.assertEqual(credits[-1], date(2026, 9, 20))
+        self.assertEqual(len(credits), 13)
 
     def test_credit_on_short_month_uses_last_day(self):
         # Feb 28 counts as the February anniversary of a Jan 31 joiner.
-        self.assertEqual(accrual_credits_in_year(date(2026, 1, 31), 2026, date(2026, 2, 28)), 1)
+        self.assertEqual(
+            accrual_credit_dates(date(2026, 1, 31), date(2026, 2, 28)), [date(2026, 2, 28)]
+        )
 
     def test_no_joining_date_means_no_credits(self):
-        self.assertEqual(accrual_credits_in_year(None, 2026, TODAY), 0)
+        self.assertEqual(accrual_credit_dates(None, TODAY), [])
+
+    def test_labor_year_runs_from_anniversary_to_anniversary(self):
+        joined = date(2025, 3, 15)
+        self.assertEqual(labor_year_index(joined, date(2025, 3, 15)), 0)
+        self.assertEqual(labor_year_index(joined, date(2026, 3, 14)), 0)
+        self.assertEqual(labor_year_index(joined, date(2026, 3, 15)), 1)
+        self.assertEqual(labor_year_label(joined, 0), "Mar 15, 2025 - Mar 14, 2026")
+
+    def test_leap_day_joiner_falls_back_to_feb_28(self):
+        joined = date(2024, 2, 29)
+        self.assertEqual(anniversary(joined, 1), date(2025, 2, 28))
+        self.assertEqual(anniversary(joined, 4), date(2028, 2, 29))
+        self.assertEqual(labor_year_index(joined, date(2025, 2, 28)), 1)
 
     def test_periods_oldest_first_and_rows_close(self):
         periods = _periods(_balance(16.47, 3.32), date(2025, 8, 20), [(date(2025, 12, 24), 4)])
-        last, this = periods["rows"]
-        self.assertEqual((last["year"], last["label"]), (2025, "last year"))
-        self.assertEqual((last["earned"], last["used"], last["available"]), (7.32, 4, 3.32))
-        self.assertEqual(last["expires"], "Jan 1, 2027")
-        self.assertEqual((this["year"], this["label"]), (2026, "this year"))
-        self.assertEqual((this["earned"], this["used"], this["available"]), (16.47, 0, 16.47))
-        self.assertEqual(this["expires"], "Jan 1, 2028")
+        previous, current = periods["rows"]
+        self.assertEqual(previous["label"], "previous")
+        self.assertEqual(previous["period"], "Aug 20, 2025 - Aug 19, 2026")
+        self.assertEqual(
+            (previous["earned"], previous["used"], previous["available"]), (20.13, 4, 16.13)
+        )
+        self.assertEqual(previous["expires"], "Aug 20, 2027")
+        self.assertEqual(current["label"], "current")
+        self.assertEqual(current["period"], "Aug 20, 2026 - Aug 19, 2027")
+        self.assertEqual(
+            (current["earned"], current["used"], current["available"]), (3.66, 0, 3.66)
+        )
+        self.assertEqual(current["expires"], "Aug 20, 2028")
         self.assertEqual(periods["total"], {"earned": 23.79, "used": 4, "available": 19.79})
 
+    def test_first_labor_year_earns_eleven_credits(self):
+        # The twelfth credit lands on the anniversary, already in the next one.
+        periods = _periods(_balance(23.79), date(2025, 8, 20))
+        previous, current = periods["rows"]
+        self.assertEqual((previous["earned"], previous["used"]), (20.13, 0))
+        self.assertEqual((current["earned"], current["used"]), (3.66, 0))
+
     def test_requests_use_the_oldest_period_still_valid(self):
-        # In March 2026 the 2024 days have expired, so the 2025 days go first.
+        # By March 2026 the 2024-25 labor year has expired (Jan 10, 2026), so
+        # the days of the 2025-26 one go first.
         periods = _periods(_balance(33.43), date(2024, 1, 10), [(date(2026, 3, 2), 5)])
-        last, this = periods["rows"]
-        self.assertEqual((last["year"], last["used"]), (2025, 5))
-        self.assertEqual(this["used"], 0)
+        previous, current = periods["rows"]
+        self.assertEqual(previous["period"], "Jan 10, 2025 - Jan 9, 2026")
+        self.assertEqual(previous["used"], 5)
+        self.assertEqual(current["used"], 0)
 
     def test_used_ignores_how_the_balance_is_split(self):
         # Joined in 2024, all 30 remaining days sitting in available_days.
         periods = _periods(_balance(30, 0), date(2024, 1, 10))
-        last, this = periods["rows"]
-        self.assertEqual((last["earned"], last["used"], last["available"]), (21.96, 0, 21.96))
-        # Policy says 38.43 left; the 8.43 the balance lacks shows as used this year.
-        self.assertEqual((this["earned"], this["used"], this["available"]), (16.47, 8.43, 8.04))
+        previous, current = periods["rows"]
+        self.assertEqual(
+            (previous["earned"], previous["used"], previous["available"]), (21.96, 0, 21.96)
+        )
+        # Policy says 38.43 left; the 8.43 the balance lacks shows as used in
+        # the current period.
+        self.assertEqual(
+            (current["earned"], current["used"], current["available"]), (16.47, 8.43, 8.04)
+        )
         self.assertEqual(periods["total"]["available"], 30)
 
     def test_allocation_outside_policy_shows_as_earned_not_negative_used(self):
         # 5 credits (9.15) plus a 3-day allocation approved by HR.
         periods = _periods(_balance(12.15), date(2026, 4, 14))
-        (this,) = periods["rows"]
-        self.assertEqual((this["earned"], this["used"], this["available"]), (12.15, 0, 12.15))
+        (current,) = periods["rows"]
+        self.assertEqual(
+            (current["earned"], current["used"], current["available"]), (12.15, 0, 12.15)
+        )
 
-    def test_days_asked_beyond_the_balance_are_owed_this_year(self):
+    def test_days_asked_beyond_the_balance_are_owed_in_the_current_period(self):
         periods = _periods(_balance(-2.85), date(2026, 4, 14), [(date(2026, 11, 2), 12)])
-        (this,) = periods["rows"]
-        self.assertEqual((this["earned"], this["used"], this["available"]), (9.15, 12, -2.85))
+        (current,) = periods["rows"]
+        self.assertEqual(
+            (current["earned"], current["used"], current["available"]), (9.15, 12, -2.85)
+        )
 
-    def test_new_hire_has_no_last_year_row(self):
+    def test_new_hire_has_no_previous_row(self):
         periods = _periods(_balance(9.15), date(2026, 4, 14))
-        self.assertEqual([row["year"] for row in periods["rows"]], [2026])
+        self.assertEqual([row["label"] for row in periods["rows"]], ["current"])
+        self.assertEqual(periods["rows"][0]["period"], "Apr 14, 2026 - Apr 13, 2027")
+        self.assertEqual(periods["rows"][0]["expires"], "Apr 14, 2028")
+
+    def test_without_a_joining_date_the_balance_is_one_open_period(self):
+        periods = accrual_periods(_balance(5, 2), today=TODAY, approved=[])
+        (row,) = periods["rows"]
+        self.assertEqual((row["period"], row["expires"]), ("", ""))
+        self.assertEqual((row["earned"], row["used"], row["available"]), (7, 0, 7))
+        self.assertEqual(periods["total"]["available"], 7)
 
     def test_format_long_date_is_english(self):
         self.assertEqual(format_long_date(date(2027, 1, 1)), "Jan 1, 2027")
-
 
 class CardKindTests(SimpleTestCase):
     def _type(self, name, limit_leave=True, compensatory=False):
@@ -128,8 +181,9 @@ class BalanceCardRenderTests(TestCase):
         self.employee = make_employee(
             company=company, email="card_user@test.horilla", user=self.user
         )
+        self.joined = date.today() - timedelta(days=500)
         EmployeeWorkInformation.objects.filter(employee_id=self.employee).update(
-            date_joining=date.today() - timedelta(days=500)
+            date_joining=self.joined
         )
         self.vacation = LeaveType.objects.create(name="Vacaciones", total_days=0)
         self.medical = LeaveType.objects.create(name="Ausencia médica", limit_leave=False)
@@ -162,7 +216,8 @@ class BalanceCardRenderTests(TestCase):
         )
         self.assertIn("Vacation", html)
         self.assertEqual(html.count("Expires"), 1)  # only vacation gets the table
-        self.assertIn(f"Jan 1, {date.today().year + 1}", html)
+        # The first labor year expires two years after it started.
+        self.assertIn(format_long_date(anniversary(self.joined, 2)), html)
         self.assertIn("days available", html)
         self.assertIn("Medical leave", html)
         self.assertIn("No limit", html)
@@ -269,4 +324,6 @@ class BalanceCardRenderTests(TestCase):
         self.assertEqual([b["name"] for b in balances], ["Vacation"])
         self.assertEqual(balances[0]["available_days"], 7)
         self.assertGreaterEqual(balances[0]["used_days"], 0)
-        self.assertEqual(balances[0]["expiring_on"], f"Jan 1, {date.today().year + 1}")
+        self.assertEqual(
+            balances[0]["expiring_on"], format_long_date(anniversary(self.joined, 2))
+        )
