@@ -50,8 +50,8 @@
                         {% for row in card.periods.rows %}
                             <tr class="text-right border-b align-top">
                                 <td class="text-left px-2 py-2">
-                                    {{ row.year }}
-                                    <span class="text-dark-200 whitespace-nowrap">({% if row.label == "last year" %}{% trans "last year" %}{% else %}{% trans "this year" %}{% endif %})</span>
+                                    <span class="whitespace-nowrap">{{ row.period }}</span>
+                                    <span class="text-dark-200 whitespace-nowrap">({% if row.label == "previous" %}{% trans "previous" %}{% else %}{% trans "current" %}{% endif %})</span>
                                 </td>
                                 <td class="px-2 py-2">{{ row.earned|leave_days }}</td>
                                 <td class="px-2 py-2">{{ row.used|leave_days }}</td>

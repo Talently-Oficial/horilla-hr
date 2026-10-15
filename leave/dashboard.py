@@ -730,10 +730,10 @@ def employee_leave_balance(request):
             if leave_card_kind(lt) != "accrual":
                 continue
             periods = accrual_periods(al)
-            last_year = next(
-                (row for row in periods["rows"] if row["label"] == "last year"), None
+            previous = next(
+                (row for row in periods["rows"] if row["label"] == "previous"), None
             )
-            expiring = last_year if last_year and last_year["available"] > 0 else None
+            expiring = previous if previous and previous["available"] > 0 else None
             balances.append(
                 {
                     "type_id": lt.id,
