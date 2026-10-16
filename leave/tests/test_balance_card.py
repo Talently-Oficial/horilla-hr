@@ -54,14 +54,18 @@ class AccrualPeriodTests(SimpleTestCase):
         joined = date(2025, 3, 15)
         self.assertEqual(labor_year_index(joined, date(2025, 3, 15)), 0)
         self.assertEqual(labor_year_index(joined, date(2026, 3, 14)), 0)
-        self.assertEqual(labor_year_index(joined, date(2026, 3, 15)), 1)
+        # The credit dated on the anniversary pays for the month that ends
+        # there, so it still belongs to the labor year that closes.
+        self.assertEqual(labor_year_index(joined, date(2026, 3, 15)), 0)
+        self.assertEqual(labor_year_index(joined, date(2026, 3, 16)), 1)
         self.assertEqual(labor_year_label(joined, 0), "Mar 15, 2025 - Mar 14, 2026")
 
     def test_leap_day_joiner_falls_back_to_feb_28(self):
         joined = date(2024, 2, 29)
         self.assertEqual(anniversary(joined, 1), date(2025, 2, 28))
         self.assertEqual(anniversary(joined, 4), date(2028, 2, 29))
-        self.assertEqual(labor_year_index(joined, date(2025, 2, 28)), 1)
+        self.assertEqual(labor_year_index(joined, date(2025, 2, 28)), 0)
+        self.assertEqual(labor_year_index(joined, date(2025, 3, 1)), 1)
 
     def test_periods_oldest_first_and_rows_close(self):
         periods = _periods(_balance(16.47, 3.32), date(2025, 8, 20), [(date(2025, 12, 24), 4)])
@@ -69,23 +73,24 @@ class AccrualPeriodTests(SimpleTestCase):
         self.assertEqual(previous["label"], "previous")
         self.assertEqual(previous["period"], "Aug 20, 2025 - Aug 19, 2026")
         self.assertEqual(
-            (previous["earned"], previous["used"], previous["available"]), (20.13, 4, 16.13)
+            (previous["earned"], previous["used"], previous["available"]), (21.96, 4, 17.96)
         )
         self.assertEqual(previous["expires"], "Aug 20, 2027")
         self.assertEqual(current["label"], "current")
         self.assertEqual(current["period"], "Aug 20, 2026 - Aug 19, 2027")
         self.assertEqual(
-            (current["earned"], current["used"], current["available"]), (3.66, 0, 3.66)
+            (current["earned"], current["used"], current["available"]), (1.83, 0, 1.83)
         )
         self.assertEqual(current["expires"], "Aug 20, 2028")
         self.assertEqual(periods["total"], {"earned": 23.79, "used": 4, "available": 19.79})
 
-    def test_first_labor_year_earns_eleven_credits(self):
-        # The twelfth credit lands on the anniversary, already in the next one.
+    def test_every_labor_year_earns_twelve_credits(self):
+        # The twelfth credit lands on the anniversary and closes the year, so
+        # the first labor year is worth the same 21.96 as every other one.
         periods = _periods(_balance(23.79), date(2025, 8, 20))
         previous, current = periods["rows"]
-        self.assertEqual((previous["earned"], previous["used"]), (20.13, 0))
-        self.assertEqual((current["earned"], current["used"]), (3.66, 0))
+        self.assertEqual((previous["earned"], previous["used"]), (21.96, 0))
+        self.assertEqual((current["earned"], current["used"]), (1.83, 0))
 
     def test_requests_use_the_oldest_period_still_valid(self):
         # By March 2026 the 2024-25 labor year has expired (Jan 10, 2026), so
@@ -103,10 +108,10 @@ class AccrualPeriodTests(SimpleTestCase):
         self.assertEqual(
             (previous["earned"], previous["used"], previous["available"]), (21.96, 0, 21.96)
         )
-        # Policy says 38.43 left; the 8.43 the balance lacks shows as used in
+        # Policy says 36.6 left; the 6.6 the balance lacks shows as used in
         # the current period.
         self.assertEqual(
-            (current["earned"], current["used"], current["available"]), (16.47, 8.43, 8.04)
+            (current["earned"], current["used"], current["available"]), (14.64, 6.6, 8.04)
         )
         self.assertEqual(periods["total"]["available"], 30)
 
