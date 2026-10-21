@@ -238,9 +238,11 @@ def deduct_leave_balance(leave_request, available_leave):
 
 
 # Talently accrual policy: days are credited each month on the joining-date
-# anniversary, and belong to the labor year they land in -- one joining-date
-# anniversary to the next. The days a labor year earns expire two labor years
-# after it started, so a day lives between one and two years.
+# anniversary, in arrears, and belong to the labor year they were worked in --
+# one joining-date anniversary to the next, the closing anniversary included.
+# Every labor year is therefore worth 12 credits, the 22 business days of the
+# policy. What a labor year earns expires two labor years after it started, so
+# a day lives between one and two years.
 LEAVE_MONTHLY_ACCRUAL = getattr(settings, "LEAVE_MONTHLY_ACCRUAL", 1.83)
 
 # Labor years a day stays usable, counted from the start of the labor year that
@@ -329,11 +331,16 @@ def anniversary(date_joining, years):
 
 def labor_year_index(date_joining, when):
     """
-    Which labor year `when` falls in: 0 from the joining date to the day before
-    the first anniversary, 1 until the second, and so on.
+    Which labor year `when` falls in: 0 from the joining date through the first
+    anniversary, 1 through the second, and so on.
+
+    The monthly credits are paid in arrears -- the credit dated on an
+    anniversary pays for the month that ends there, worked inside the year that
+    closes -- so it belongs to that year and not to the one that opens. That is
+    what makes every labor year worth 12 credits, the first one included.
     """
     years = when.year - date_joining.year
-    if years > 0 and anniversary(date_joining, years) > when:
+    if years > 0 and anniversary(date_joining, years) >= when:
         years -= 1
     return max(years, 0)
 
@@ -382,7 +389,8 @@ def accrual_periods(available_leave, today=None, date_joining=None, approved=Non
 
     A labor year runs from one joining-date anniversary to the next, and the
     days it earns expire two years after it started: joined Mar 15, 2025, the
-    days earned up to Mar 14, 2026 can be taken until Mar 14, 2027.
+    12 credits of that labor year (Apr 15, 2025 through Mar 15, 2026) can be
+    taken until Mar 14, 2027.
 
     Earned and Used come from the policy, not from how the balance happens to
     be split between available_days and carryforward_days: monthly credits by
