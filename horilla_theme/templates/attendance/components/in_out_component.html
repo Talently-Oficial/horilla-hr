@@ -108,8 +108,9 @@
 
 {% if request|is_timerunner_enabled %}
     <script>
-        var at_work_seconds = $(".at_work_seconds").data("at-work-seconds");
-        var run = $(".at_work_seconds").data("run");
+        var $atWorkInfo = $(".at_work_seconds");
+        var at_work_seconds = parseFloat($atWorkInfo.data("at-work-seconds"));
+        var run = $atWorkInfo.data("run");
         var whiteLabelCompany = $("#whiteLabelCompany").data("company");
 
         // time-runner
@@ -132,15 +133,19 @@
             clearInterval(window.timeRunnerInterval);
         }
 
-        $(".time-runner").not("title").html(secondsToDuration(at_work_seconds));
-        $("title.time-runner").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
+        // Without the check in/out widget there is no worked time to show:
+        // leave the title as rendered instead of writing NaN:NaN:NaN into it.
+        if ($atWorkInfo.length && !isNaN(at_work_seconds)) {
+            $(".time-runner").not("title").html(secondsToDuration(at_work_seconds));
+            $("title.time-runner").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
 
-        if (run) {
-            window.timeRunnerInterval = setInterval(() => {
-                at_work_seconds = parseInt(at_work_seconds) + 1;
-                $("div.time-runner").html(secondsToDuration(at_work_seconds));
-                $("title").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
-            }, 1000);
+            if (run) {
+                window.timeRunnerInterval = setInterval(() => {
+                    at_work_seconds = parseInt(at_work_seconds) + 1;
+                    $("div.time-runner").html(secondsToDuration(at_work_seconds));
+                    $("title").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
+                }, 1000);
+            }
         }
     </script>
 {% endif %}
